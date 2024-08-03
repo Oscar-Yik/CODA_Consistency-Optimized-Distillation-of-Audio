@@ -1,4 +1,4 @@
-<img src="img\cover.jpg">
+<img src="imgs\cover.jpg">
 
 # Diff-Pitcher (PyTorch)
 
