@@ -1,4 +1,4 @@
-<img src="https://huggingface.co/Higobeatz/Diff-Pitcher/blob/main/imgs/cover.jpg">
+<img src="https://github.com/haidog-yaqub/DiffPitcher/raw/main/img/cover.png">
 
 # Diff-Pitcher (PyTorch)
 
