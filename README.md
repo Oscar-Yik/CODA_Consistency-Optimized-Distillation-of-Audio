@@ -1,3 +1,6 @@
+---
+license: mit
+---
 <img src="https://github.com/haidog-yaqub/DiffPitcher/raw/main/img/cover.png">
 
 # Diff-Pitcher (PyTorch)
