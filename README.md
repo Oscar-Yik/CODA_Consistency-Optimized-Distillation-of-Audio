@@ -1,89 +1,86 @@
----
-license: mit
----
-<img src="https://github.com/haidog-yaqub/DiffPitcher/raw/main/img/cover.png">
+# TODO
+- How heavy and what the LiteVocoder can do
+- Try out using the big model with my own audio to test feasibility in the best case
 
-# Diff-Pitcher (PyTorch)
+# Usage
+- clone repo
+- `uv init` 
+- `uv pip install -r requirements.txt`
+- `uv run template_based_apc.py`
 
-Official Pytorch Implementation of [Diff-Pitcher: Diffusion-based Singing Voice Pitch Correction](https://engineering.jhu.edu/lcap/data/uploads/pdfs/waspaa2023_hai.pdf)
+# What does DiffPitcher do
 
---------------------
+![](./imgs/template_diff_pitcher.png)
 
-Thank you all for your interest in this research project. I am currently optimizing the model's performance and computation efficiency. I plan to release a user-friendly version, either a GUI or a VST, in the first half of this year, and will update the open-source license.
+### Inputs
+- Source Audio (singer's voice/timbre/off-key singing)
+    - model extracts "speaker identity/timbre" to make output sound the same as the original singer
+- Reference Audio (off key singing)
+    - template mode: 
+        - directly use off-tune audio pitch
+    - score mode:
+        - instead of audio, use the MIDI as the pitch
+        - use PitchFormer model to predict the reference f0 pitch (pitch contour)
 
-If you are familiar with PyTorch, you can follow [Code Examples](#examples) to use Diff-Pitcher.
+### Outputs
+- Autotuned mel-spectrogram of the reference in the same timbre as the source singer 
+    - feed this into BigVGAN to get the actual output audio
 
---------------------
+### Advantages over regular autotune
+- Source-Filter Disentanglement: 
+    - treats source singer's voice like an instrument
+    - adjusts the pitch (cords,notes) but keeps the filter (vocal timbre)
+- Generative reconstruction:
+    - Doesn't just shift frequencies, it regenerates the notes 
+    - preserves natural glottal pulses
+        - better at vibrato and digital shifting
 
-Diff-Pitcher
+### Models
+- UNetPitcher
+- BigVGAN
+- PitchFormer
 
-- [Demo Page](#demo)
-- [Todo List](#todo)
-- [Code Examples](#examples)
-- [References](#references)
-- [Acknowledgement](#acknowledgement)
+# Idea
+Instead of using the off-key singing as the source for the vocal filter, we pitch snap it to the closest note and use it as the reference.
+A separate 5-10s "calibration" audio will be pre-recorded as the vocal filter and pre-loaded onto the ESP32's disk.
 
-## Demo
+![](./imgs/project_idea.png)
 
-🎵 Listen to [examples](https://jhu-lcap.github.io/Diff-Pitcher/)
+### On PC
+1. train a dumb 1D CNN student model on Diff Pitcher
+2. on the pc, record a 5-10s calibration audio to get person's timbre 
+3. produce vector embeddings
 
-## Todo
-- [x] Update codes and demo
-- [x] Support 🤗 [Diffusers](https://github.com/huggingface/diffusers)
-- [x] Upload checkpoints
-- [x] Pipeline tutorial
-- [ ] Merge to [Your-Stable-Audio](https://github.com/haidog-yaqub/Your-Stable-Audio)
-- [ ] Audio Plugin Support
-## Examples
-- Download checkpoints: 🎒[ckpts](https://github.com/haidog-yaqub/DiffPitcher/tree/main/ckpts)
-- Prepare environment: [requirements.txt](requirements.txt)
-- Feel free to try:
-  - template-based automatic pitch correction: [template_based_apc.py](template_based_apc.py)
-  - score-based automatic pitch correction: [score_based_apc.py](score_based_apc.py)
+### On ESP32
+1. Store calibration embeddings on disk
+2. record input off-tune audio
+3. run 1D CNN to get output mel-spectrogram
+4. run small vocoder to get the output audio 
+5. play the auto-tuned audio
 
+### Details
+- Use int8 
+- tensorflow Lite micro?
+- Use template_pitcher
+    - don't use MIDI in order to remove the PitchFormer model
+    - score_pitcher needs timestamps to be aligned with MIDI 
+- Data transformations
+    - source audio 
+        - get its mel spectrogram (same process as described in wikipedia)
+    - reference audio 
+        - mix with input and perform signal processing functions to get f0 pitch 
 
-## References
+# Possible Student Models
+- 1D CNN
+- Others
+    - LSTM (complex)
+    - Phase Vocoding
+    - PSOLA
+    - DSP
+    - Consistency Models
+    - Flow Matching
 
-If you find the code useful for your research, please consider citing:
-
-```bibtex
-@inproceedings{hai2023diff,
-  title={Diff-Pitcher: Diffusion-Based Singing Voice Pitch Correction},
-  author={Hai, Jiarui and Elhilali, Mounya},
-  booktitle={2023 IEEE Workshop on Applications of Signal Processing to Audio and Acoustics (WASPAA)},
-  pages={1--5},
-  year={2023},
-  organization={IEEE}
-}
-```
-
-This repo is inspired by:
-
-```bibtex
-@article{popov2021diffusion,
-  title={Diffusion-based voice conversion with fast maximum likelihood sampling scheme},
-  author={Popov, Vadim and Vovk, Ivan and Gogoryan, Vladimir and Sadekova, Tasnima and Kudinov, Mikhail and Wei, Jiansheng},
-  journal={arXiv preprint arXiv:2109.13821},
-  year={2021}
-}
-```
-```bibtex
-@inproceedings{liu2022diffsinger,
-  title={Diffsinger: Singing voice synthesis via shallow diffusion mechanism},
-  author={Liu, Jinglin and Li, Chengxi and Ren, Yi and Chen, Feiyang and Zhao, Zhou},
-  booktitle={Proceedings of the AAAI conference on artificial intelligence},
-  volume={36},
-  number={10},
-  pages={11020--11028},
-  year={2022}
-}
-```
-
-## Acknowledgement
-
-[Welcome to LCAP! < LCAP (jhu.edu)](https://engineering.jhu.edu/lcap/)
-
-We borrow code from following repos:
-
- - `Diffusion Schedulers` are based on 🤗 [Diffusers](https://github.com/huggingface/diffusers)
- - `2D UNet` is based on [DiffVC](https://github.com/huawei-noah/Speech-Backbones/tree/main/DiffVC)
+# Possible student vocoders
+- DDSP
+- LCPNet
+- LiteVocoder
