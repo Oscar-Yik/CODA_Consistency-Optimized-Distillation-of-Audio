@@ -7,6 +7,10 @@ import pysptk
 import pyworld as pw
 from fastdtw import fastdtw
 from scipy import spatial
+from scipy import signal
+import os
+from tqdm import tqdm
+import soundfile as sf
 
 from librosa.filters import mel as librosa_mel_fn
 mel_basis = librosa_mel_fn(sr=24000, n_fft=1024, n_mels=100, fmin=0, fmax=12000)
@@ -117,6 +121,7 @@ def get_mcep(x, n_fft=1024, n_shift=256, sr=24000):
 def get_matched_f0(x, y, method='world', n_fft=1024, n_shift=256):
     # f0_x = get_f0(x, method='pyin', padding=False)
     f0_y = get_f0(y, method=method, padding=False)
+    # f0_y = get_autotuned_f0(y, method, False)
     # print(f0_y.max())
     # print(f0_y.min())
 
@@ -199,6 +204,70 @@ def show_plot(tensor):
     plt.tight_layout()
     fig.canvas.draw()
     plt.show()
+
+
+def get_autotuned_f0(wav_path, method, padding): 
+    
+    f0_raw = get_f0(wav_path, method=method, padding=padding)
+
+    voiced_mask = f0_raw > 0
+    autotuned_f0 = np.copy(f0_raw)
+    
+    if np.any(voiced_mask):
+        midi_notes = librosa.hz_to_midi(f0_raw[voiced_mask])
+        snapped_midi = np.round(midi_notes)
+        autotuned_f0[voiced_mask] = librosa.midi_to_hz(snapped_midi)
+    
+    autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=5)
+        
+    return autotuned_f0
+
+
+def apply_complex_degradation(y, sr, base_shift):
+    # Apply the base constant offset (e.g., -1.2 semitones)
+    y_shifted = librosa.effects.pitch_shift(y, sr=sr, n_steps=base_shift)
+    
+    # Apply Jitter (Pitch Instability)
+    # Simulate this by breaking the audio into frames and shifting each frame slightly differently.
+    hop_length = 512
+    frames = librosa.util.frame(y_shifted, frame_length=2048, hop_length=hop_length)
+    
+    # Create a slow-moving jitter curve (0.5Hz to 2Hz)
+    t = np.linspace(0, len(y_shifted)/sr, frames.shape[1])
+    jitter_curve = 0.3 * np.sin(2 * np.pi * 1.5 * t) # 1.5Hz oscillation, 0.3 semitone depth
+    
+    y_jittered = np.zeros_like(y_shifted)
+    
+    # Apply the varying shift frame-by-frame
+    for i in range(frames.shape[1]):
+        start = i * hop_length
+        end = start + 2048
+        if end > len(y_shifted): break
+        
+        # Shift the current frame by the jitter value
+        frame_shifted = librosa.effects.pitch_shift(frames[:, i], sr=sr, n_steps=jitter_curve[i])
+        y_jittered[start:end] += frame_shifted * np.hanning(2048) # Overlap-add with windowing
+        
+    return y_jittered
+
+
+def generate_dataset(input_dir, output_dir, sr=24000):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+        os.makedirs(os.path.join(output_dir, "off_tune"))
+        os.makedirs(os.path.join(output_dir, "ground_truth"))
+
+    files = [f for f in os.listdir(input_dir) if f.endswith('.wav')]
+    
+    for f in tqdm(files):
+        y, _ = librosa.load(os.path.join(input_dir, f), sr=sr)
+        
+        sf.write(os.path.join(output_dir, "ground_truth", f), y, sr)
+    
+        random_shift = np.random.uniform(-1.5, 1.5)
+        y_off = apply_complex_degradation(y, sr, random_shift)
+        
+        sf.write(os.path.join(output_dir, "off_tune", f), y_off, sr)
 
 
 if __name__ == '__main__':

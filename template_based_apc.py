@@ -14,7 +14,6 @@ from pitch_controller.utils import minmax_norm_diff, reverse_minmax_norm_diff
 from pitch_controller.modules.BigVGAN.inference import load_model
 from utils import get_mel, get_world_mel, get_f0, f0_to_coarse, show_plot, get_matched_f0, log_f0
 
-
 @torch.no_grad()
 def template_pitcher(source, pitch_ref, model, hifigan, steps=50, shift_semi=0):
 
@@ -84,6 +83,7 @@ if __name__ == '__main__':
     hifigan.eval()
 
     pred_audio = template_pitcher('examples/off-key.wav', 'examples/reference.wav', model, hifigan, steps=50, shift_semi=0)
+    # pred_audio = template_pitcher('examples/off-key.wav', 'examples/off-key.wav', model, hifigan, steps=50, shift_semi=0)
     sf.write('output_template.wav', pred_audio, samplerate=sr)
 
 

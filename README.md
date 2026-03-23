@@ -1,4 +1,10 @@
 # TODO
+- Consider switching to Raspberry Pi
+    - Use Emma's :D
+    - Pico 2: $8.95
+    - Zero V1.3: $14.45
+    - Zero 2 W: $21:75
+    - Model A+: $36.45
 - How heavy and what the LiteVocoder can do
 - Try out using the big model with my own audio to test feasibility in the best case
 
@@ -69,6 +75,12 @@ A separate 5-10s "calibration" audio will be pre-recorded as the vocal filter an
         - get its mel spectrogram (same process as described in wikipedia)
     - reference audio 
         - mix with input and perform signal processing functions to get f0 pitch 
+
+# Training
+
+### Datasets
+Take good audio (pure voice) and add noise
+- ![MIR-1K](https://www.kaggle.com/datasets/datongmuyuyi/mir1k)
 
 # Possible Student Models
 - 1D CNN
