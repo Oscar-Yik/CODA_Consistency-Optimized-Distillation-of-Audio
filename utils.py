@@ -8,9 +8,11 @@ import pyworld as pw
 from fastdtw import fastdtw
 from scipy import spatial
 from scipy import signal
+from scipy.ndimage import gaussian_filter1d
 import os
 from tqdm import tqdm
 import soundfile as sf
+import time
 
 from librosa.filters import mel as librosa_mel_fn
 mel_basis = librosa_mel_fn(sr=24000, n_fft=1024, n_mels=100, fmin=0, fmax=12000)
@@ -46,6 +48,8 @@ def get_mel(wav_path):
 
 
 def get_world_mel(wav_path=None, sr=24000, wav=None):
+    start_time = time.time()
+
     if wav_path is not None:
         wav, _ = librosa.load(wav_path, sr=24000)
     wav = (wav * 32767).astype(np.int16)
@@ -74,6 +78,7 @@ def get_world_mel(wav_path=None, sr=24000, wav=None):
         mel_spectrogram = np.pad(mel_spectrogram, ((0, 0), (0, 8 - mel_spectrogram.shape[-1] % 8)), 'minimum')
 
     log_mel_spectrogram = np.log(np.clip(mel_spectrogram, a_min=1e-5, a_max=None))
+    print(f"mel duration: {time.time() - start_time}")
     return log_mel_spectrogram
 
 
@@ -120,8 +125,8 @@ def get_mcep(x, n_fft=1024, n_shift=256, sr=24000):
 
 def get_matched_f0(x, y, method='world', n_fft=1024, n_shift=256):
     # f0_x = get_f0(x, method='pyin', padding=False)
-    f0_y = get_f0(y, method=method, padding=False)
-    # f0_y = get_autotuned_f0(y, method, False)
+    # f0_y = get_f0(y, method=method, padding=False)
+    f0_y = get_autotuned_f0(y, method, False)
     # print(f0_y.max())
     # print(f0_y.min())
 
@@ -206,9 +211,13 @@ def show_plot(tensor):
     plt.show()
 
 
-def get_autotuned_f0(wav_path, method, padding): 
+def get_autotuned_f0(wav_path, method, padding, shift_semi=2): 
     
     f0_raw = get_f0(wav_path, method=method, padding=padding)
+    # print(f0_raw)
+
+    if shift_semi != 0:
+        f0_raw = f0_raw * (2 ** (shift_semi / 12))
 
     voiced_mask = f0_raw > 0
     autotuned_f0 = np.copy(f0_raw)
@@ -218,9 +227,12 @@ def get_autotuned_f0(wav_path, method, padding):
         snapped_midi = np.round(midi_notes)
         autotuned_f0[voiced_mask] = librosa.midi_to_hz(snapped_midi)
     
-    autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=5)
+    autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=51)
+    autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=11)
+    print(autotuned_f0)
+    hybrid_f0 = gaussian_filter1d(autotuned_f0, sigma=2.0)
         
-    return autotuned_f0
+    return hybrid_f0
 
 
 def apply_complex_degradation(y, sr, base_shift):
