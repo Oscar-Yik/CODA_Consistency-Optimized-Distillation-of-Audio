@@ -229,7 +229,6 @@ def get_autotuned_f0(wav_path, method, padding, shift_semi=2):
     
     autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=51)
     autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=11)
-    print(autotuned_f0)
     hybrid_f0 = gaussian_filter1d(autotuned_f0, sigma=2.0)
         
     return hybrid_f0
