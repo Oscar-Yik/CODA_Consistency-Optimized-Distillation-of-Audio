@@ -15,7 +15,7 @@
 - `uv run template_based_apc.py`
 
 # How to run training loop
-Only supports manually copying over training data at the moment
+Only supports manually copying over training data at the moment. am working on a actual functional loader
 ```
 mkdir -p data/test_singer/vocal
 cp examples/emma_twinkle.wav data/test_singer/vocal/
@@ -62,6 +62,11 @@ uv run  train_consistency.py -data_dir ../data/ -batch_size 1 -num_workers 0
 
 Feel free to change the batch size, mines is at 1 or else I get gpu OOM. Also, currently both students are on the GPU and the teacher is on CPU. If all models fit on GPU then feel free to move the Teacher over as well. Losses as well as inference outputs are written to `/pitch_controller/logs_consistency`. Consistency model weights are written to `ckpt_consistency`.
 
+## TODO:
+- make loss graph
+- make a real pipeline for loading actual data
+- make ability to continue training from a model weight snapshot
+- qol changes to make it easier to switch between running on gpu and cpu
 
 # What does DiffPitcher do
 
