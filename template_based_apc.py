@@ -77,7 +77,7 @@ if __name__ == '__main__':
     model = UNetPitcher(**unet_cfg)
     unet_path = 'ckpts/world_fixed_40.pt'
 
-    state_dict = torch.load(unet_path)
+    state_dict = torch.load(unet_path, weights_only=True) # suppress security warning
     for key in list(state_dict.keys()):
         state_dict[key.replace('_orig_mod.', '')] = state_dict.pop(key)
     model.load_state_dict(state_dict)
