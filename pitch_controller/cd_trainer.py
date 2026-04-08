@@ -30,7 +30,6 @@ class ConsistencyTrainer:
 
     def train_step(self, source_x, mean, f0_ref, noise_scheduler, t_idx):
         self.optimizer.zero_grad()
-
         t = noise_scheduler.timesteps[t_idx]
         t_prev = noise_scheduler.timesteps[t_idx + 1] if t_idx + 1 < len(noise_scheduler.timesteps) else 0 # if we r at last step, t_prev is 0
 
