@@ -14,6 +14,55 @@
 - `uv pip install -r requirements.txt`
 - `uv run template_based_apc.py`
 
+# How to run training loop
+Only supports manually copying over training data at the moment
+```
+mkdir -p data/test_singer/vocal
+cp examples/emma_twinkle.wav data/test_singer/vocal/
+cp examples/oscar_birthday.wav data/test_singer/vocal/
+touch data/meta_fix.csv
+```
+
+Put the following contents into `meta_fix.csv:` 
+```
+subset,file_name,folder,subfolder
+train,emma_twinkle.wav,test_singer/,vocal/
+train,oscar_birthday.wav,test_singer/,vocal/
+```
+
+then run
+```
+cd pitch_controller
+uv run prepare_test_data.py
+```
+
+Then folder structure should look like this
+```
+data/
+  ├── meta_fix.csv
+  └── test_singer/
+      ├── vocal/
+      │   ├── emma_twinkle.wav
+      │   └── oscar_birthday.wav
+      ├── mel/
+      │   ├── emma_twinkle.wav.npy
+      │   └── oscar_birthday.wav.npy
+      ├── f0/
+      │   ├── emma_twinkle.wav.npy
+      │   └── oscar_birthday.wav.npy
+      └── world/
+          ├── emma_twinkle.wav.npy
+          └── oscar_birthday.wav.npy
+```
+
+now run
+```
+uv run  train_consistency.py -data_dir ../data/ -batch_size 1 -num_workers 0
+```
+
+Feel free to change the batch size, mines is at 1 or else I get gpu OOM. Also, currently both students are on the GPU and the teacher is on CPU. If all models fit on GPU then feel free to move the Teacher over as well. Losses as well as inference outputs are written to `/pitch_controller/logs_consistency`. Consistency model weights are written to `ckpt_consistency`.
+
+
 # What does DiffPitcher do
 
 ![](./imgs/template_diff_pitcher.png)
