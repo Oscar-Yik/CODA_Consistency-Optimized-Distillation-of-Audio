@@ -7,18 +7,18 @@ from models.unet import UNetPitcher
 
 
 class ConsistencyTrainer:
-    def __init__(self, teacher_model, unet_cfg, device='cuda', lr=1e-5):
+    def __init__(self, teacher_model, unet_cfg, device='cuda', lr=1e-5, weight_decay=1e-6):
         self.device = device
         self.teacher = teacher_model.to('cpu').eval()
-        
+
         # initialize student with same weights as teacher
         student_unet = UNetPitcher(**unet_cfg).to(device)
         student_unet.load_state_dict(self.teacher.state_dict())
 
         self.student = ConsistencyPitcher(student_unet).to(device)
         self.target_student = copy.deepcopy(self.student).to(device).eval()
-        
-        self.optimizer = torch.optim.Adam(self.student.parameters(), lr=lr)
+
+        self.optimizer = torch.optim.AdamW(self.student.parameters(), lr=lr, weight_decay=weight_decay)
         self.ema_mu = 0.999 # how much of the target student parameters we keep each update
         self.losses = []
 
@@ -30,12 +30,13 @@ class ConsistencyTrainer:
 
     def train_step(self, source_x, mean, f0_ref, noise_scheduler, t_idx):
         self.optimizer.zero_grad()
-        
+
         t = noise_scheduler.timesteps[t_idx]
         t_prev = noise_scheduler.timesteps[t_idx + 1] if t_idx + 1 < len(noise_scheduler.timesteps) else 0 # if we r at last step, t_prev is 0
 
         noise = torch.randn_like(source_x)
-        x_t = noise_scheduler.add_noise(source_x, noise, t)
+        t_batch = torch.tensor([t] * source_x.shape[0], device=self.device)
+        x_t = noise_scheduler.add_noise(source_x, noise, t_batch)
         
         #  teacher x_t -> x_{t-1}
         with torch.no_grad():
@@ -49,7 +50,7 @@ class ConsistencyTrainer:
             x_t_prev_cpu = noise_scheduler.step(model_output, t, x_t_cpu).prev_sample
 
             x_t_prev = x_t_prev_cpu.to(self.device)
-            noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to('cuda')
+            noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to(self.device)
 
         # online student predicts x_0 from x_t (gradients flow here)
         t_gpu = torch.as_tensor(t).to(self.device)

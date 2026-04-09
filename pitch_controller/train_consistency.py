@@ -24,26 +24,27 @@ parser.add_argument('-seed', type=int, default=98)
 parser.add_argument('-amp', type=bool, default=True)
 parser.add_argument('-compile', type=bool, default=False)
 
-parser.add_argument('-data_dir', type=str, default='../24k_center/')
+parser.add_argument('-data_dir', type=str, default='../data/')
 parser.add_argument('-lpc_dir', type=str, default='world')
 parser.add_argument('-vocoder_dir', type=str, default='../ckpts/bigvgan_24khz_100band/g_05000000.pt')
 
 parser.add_argument('-train_frames', type=int, default=128)
-parser.add_argument('-batch_size', type=int, default=16)
+parser.add_argument('-batch_size', type=int, default=8)
 parser.add_argument('-test_size', type=int, default=1)
 parser.add_argument('-num_workers', type=int, default=4)
 parser.add_argument('-lr', type=float, default=5e-5)
 parser.add_argument('-weight_decay', type=int, default=1e-6)
 
-parser.add_argument('-epochs', type=int, default=20)
+parser.add_argument('-epochs', type=int, default=80)
 parser.add_argument('-save_every', type=int, default=2)
-parser.add_argument('-log_step', type=int, default=200)
+parser.add_argument('-log_step', type=int, default=100)
 parser.add_argument('-log_dir', type=str, default='logs_consistency')
 parser.add_argument('-ckpt_dir', type=str, default='ckpt_consistency')
 
 args = parser.parse_args()
 args.save_ori = True
-config = yaml.load(open(args.config), Loader=yaml.FullLoader)
+with open(args.config) as f:
+    config = yaml.load(f, Loader=yaml.FullLoader)
 mel_cfg = config['logmel']
 ddpm_cfg = config['ddpm']
 unet_cfg = config['unet']
@@ -93,9 +94,9 @@ if __name__ == "__main__":
         teacher_model=teacher_model,
         unet_cfg=unet_cfg,
         device=args.device,
-        lr=args.lr
+        lr=args.lr,
+        weight_decay=args.weight_decay
     )
-    # print('Number of parameters = %.2fm\n' % (model.nparams / 1e6))
 
     # prepare DPM scheduler
     noise_scheduler = DDIMScheduler(num_train_timesteps=ddpm_cfg['num_train_steps'])
@@ -132,17 +133,17 @@ if __name__ == "__main__":
             global_step += 1
 
             # logging
-            # if global_step % args.log_step == 0:
-            losses = np.asarray(losses)
-            msg = '\nEpoch: [{}][{}]\t' \
-                    'Batch: [{}][{}]\tLoss: {:.6f}\n'.format(epoch,
-                                                            args.epochs,
-                                                            step+1,
-                                                            len(train_loader),
-                                                            np.mean(losses))
-            with open(f'{args.log_dir}/train.log', 'a') as f:
-                f.write(msg)
-            losses = []
+            if global_step % args.log_step == 0:
+                losses = np.asarray(losses)
+                msg = '\nEpoch: [{}][{}]\t' \
+                        'Batch: [{}][{}]\tLoss: {:.6f}\n'.format(epoch,
+                                                                args.epochs,
+                                                                step+1,
+                                                                len(train_loader),
+                                                                np.mean(losses))
+                with open(f'{args.log_dir}/train.log', 'a') as f:
+                    f.write(msg)
+                losses = []
 
         if epoch % args.save_every > 0:
             continue
@@ -156,14 +157,14 @@ if __name__ == "__main__":
         trainer.student.eval()
         with torch.no_grad():
             # Take the first mel from the batch as a test
-            test_mel = mel[0:1]
+            test_mean = mean[0:1]  # Use content representation, not target mel
             test_f0 = f0[0:1]
-            
-            # use pure noise 
-            noise = torch.randn_like(test_mel)
+
+            # use pure noise
+            noise = torch.randn_like(test_mean)
             t_max = noise_scheduler.timesteps[0]
-            
-            pred = trainer.student(noise, t_max, test_mel, test_f0, noise_scheduler)
+
+            pred = trainer.student(noise, t_max, test_mean, test_f0, noise_scheduler)
             
             # Save audio sample
             pred_rescaled = reverse_minmax_norm_diff(pred, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
