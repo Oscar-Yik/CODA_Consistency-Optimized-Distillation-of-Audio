@@ -14,59 +14,6 @@
 - `uv pip install -r requirements.txt`
 - `uv run template_based_apc.py`
 
-# How to run training loop
-Only supports manually copying over training data at the moment. am working on a actual functional loader
-```
-mkdir -p data/test_singer/vocal
-cp examples/emma_twinkle.wav data/test_singer/vocal/
-cp examples/oscar_birthday.wav data/test_singer/vocal/
-touch data/meta_fix.csv
-```
-
-Put the following contents into `meta_fix.csv:` 
-```
-subset,file_name,folder,subfolder
-train,emma_twinkle.wav,test_singer/,vocal/
-train,oscar_birthday.wav,test_singer/,vocal/
-```
-
-then run
-```
-cd pitch_controller
-uv run prepare_test_data.py
-```
-
-Then folder structure should look like this
-```
-data/
-  ├── meta_fix.csv
-  └── test_singer/
-      ├── vocal/
-      │   ├── emma_twinkle.wav
-      │   └── oscar_birthday.wav
-      ├── mel/
-      │   ├── emma_twinkle.wav.npy
-      │   └── oscar_birthday.wav.npy
-      ├── f0/
-      │   ├── emma_twinkle.wav.npy
-      │   └── oscar_birthday.wav.npy
-      └── world/
-          ├── emma_twinkle.wav.npy
-          └── oscar_birthday.wav.npy
-```
-
-now run
-```
-uv run  train_consistency.py -data_dir ../data/ -batch_size 1 -num_workers 0
-```
-
-Feel free to change the batch size, mines is at 1 or else I get gpu OOM. Also, currently both students are on the GPU and the teacher is on CPU. If all models fit on GPU then feel free to move the Teacher over as well. Losses as well as inference outputs are written to `/pitch_controller/logs_consistency`. Consistency model weights are written to `ckpt_consistency`.
-
-## TODO:
-- make loss graph
-- make a real pipeline for loading actual data
-- make ability to continue training from a model weight snapshot
-- qol changes to make it easier to switch between running on gpu and cpu
 
 # What does DiffPitcher do
 
@@ -134,7 +81,51 @@ A separate 5-10s "calibration" audio will be pre-recorded as the vocal filter an
 
 ### Datasets
 Take good audio (pure voice) and add noise
+- ![OpenSinger](https://github.com/Multi-Singer/Multi-Singer.github.io?tab=readme-ov-file) -> currently support this
 - ![MIR-1K](https://www.kaggle.com/datasets/datongmuyuyi/mir1k)
+
+# How to run training loop
+Download the OpenSigner dataset from this ![google drive link](https://drive.google.com/file/d/1EofoZxvalgMjZqzUEuEdleHIZ6SHtNuK/view). Make a directory called `/data` at project root and put it in there. Then unzip the file with 
+```
+tar -xvzf OpenSinger.tar.gz --exclude="*.txt" --exclude="*.lab"
+```
+The unzipped files should be around 50 GB (according to Gemini at least, I didn't try). Then run
+```
+cd pitch_controller
+uv run prepare_test_data.py
+```
+
+Then folder structure should look like this
+```
+data/
+  ├── meta_fix.csv
+  ├── OpenSinger (containing subdirectories with lots of .wav files)
+  └── training/
+      ├── mel/
+      │   ├── <audio clip 1>.npy
+      │   ├── <audio clip 2>.npy
+      |   └── ...
+      ├── f0/
+      │   ├── <audio clip 1>.npy
+      │   ├── <audio clip 2>.npy
+      |   └── ...
+      └── world/
+          ├── <audio clip 1>.npy
+          ├── <audio clip 2>.npy
+          └── ...
+```
+
+now run
+```
+uv run  train_consistency.py 
+```
+
+Tunable parameters aree configured in `train_consistency.py` near the top. Feel free to change the batch size, mines is at 1 or else I get gpu OOM. Also, currently both students are on the GPU and the teacher is on CPU. If all models fit on GPU then feel free to move the Teacher over as well. Losses as well as inference outputs are written to `/pitch_controller/logs_consistency`. Consistency model weights are written to `ckpt_consistency`.
+
+## TODO:
+- make loss graph
+- make ability to continue training from a model weight snapshot
+- qol changes to make it easier to switch between running on gpu and cpu
 
 # Possible Student Models
 - 1D CNN
