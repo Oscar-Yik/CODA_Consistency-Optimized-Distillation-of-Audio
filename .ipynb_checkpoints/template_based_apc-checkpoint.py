@@ -20,7 +20,7 @@ def template_pitcher(source, pitch_ref, model, hifigan, steps=50, shift_semi=0):
 
     source_mel = get_world_mel(source, sr=sr)
 
-    f0_ref = get_matched_f0(source, pitch_ref, 'world')
+    f0_ref = get_matched_f0(x=source, y=pitch_ref, method='world')
     f0_ref = f0_ref * 2 ** (shift_semi / 12)
 
     f0_ref = log_f0(f0_ref, {'f0_bin': 345,

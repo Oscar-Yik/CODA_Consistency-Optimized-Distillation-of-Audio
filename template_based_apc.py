@@ -21,7 +21,7 @@ def template_pitcher(source, pitch_ref, model, hifigan, steps=50, shift_semi=0):
     entire_time = time.time()
     source_mel = get_world_mel(source, sr=sr)
 
-    f0_ref = get_matched_f0(source, pitch_ref, 'world')
+    f0_ref = get_matched_f0(x=source, y=pitch_ref, method='world')
     f0_ref = f0_ref * 2 ** (shift_semi / 12)
 
     f0_ref = log_f0(f0_ref, {'f0_bin': 345,
@@ -77,7 +77,7 @@ if __name__ == '__main__':
     model = UNetPitcher(**unet_cfg)
     unet_path = 'ckpts/world_fixed_40.pt'
 
-    state_dict = torch.load(unet_path, weights_only=True) # suppress security warning
+    state_dict = torch.load(unet_path, map_location=device, weights_only=True) # suppress security warning
     for key in list(state_dict.keys()):
         state_dict[key.replace('_orig_mod.', '')] = state_dict.pop(key)
     model.load_state_dict(state_dict)

@@ -57,13 +57,13 @@ def get_world_mel(wav_path=None, sr=24000, wav=None):
     # wav = wav.astype(np.float64)
     wav = wav[:(wav.shape[0] // 256) * 256]
 
-    # _f0, t = pw.dio(wav, sr, frame_period=256/sr*1000)
-    _f0, t = pw.dio(wav, sr)
+    _f0, t = pw.dio(wav, sr, frame_period=256/sr*1000) # using a fixed frame period improves performance
+    # _f0, t = pw.dio(wav, sr)
     f0 = pw.stonemask(wav, _f0, t, sr)
     sp = pw.cheaptrick(wav, f0, t, sr)
     ap = pw.d4c(wav, f0, t, sr)
-    wav_hat = pw.synthesize(f0 * 0, sp, ap, sr)
-    # wav_hat = pw.synthesize(f0 * 0, sp, ap, sr, frame_period=256/sr*1000)
+    # wav_hat = pw.synthesize(f0 * 0, sp, ap, sr)
+    wav_hat = pw.synthesize(f0 * 0, sp, ap, sr, frame_period=256/sr*1000)
 
     # pyworld output does not pad left
     wav_hat = wav_hat[:len(wav)]
@@ -78,23 +78,29 @@ def get_world_mel(wav_path=None, sr=24000, wav=None):
         mel_spectrogram = np.pad(mel_spectrogram, ((0, 0), (0, 8 - mel_spectrogram.shape[-1] % 8)), 'minimum')
 
     log_mel_spectrogram = np.log(np.clip(mel_spectrogram, a_min=1e-5, a_max=None))
-    print(f"mel duration: {time.time() - start_time}")
+    # print(f"mel duration: {time.time() - start_time}")
     return log_mel_spectrogram
 
 
-def get_f0(wav_path, method='pyin', padding=True):
+def get_f0(wav_path, wav, method='pyin', padding=True):
+    sr = 24000
+
+    if wav is None:
+        if wav_path is not None:
+            wav, sr = load(wav_path, sr=sr)
+        else:
+            raise ValueError("Must provide either 'wav' (array) or 'wav_path' (string)")
+        
     if method == 'pyin':
-        wav, sr = load(wav_path, sr=24000)
         wav = wav[:(wav.shape[0] // 256) * 256]
         wav = np.pad(wav, 384, mode='reflect')
         f0, _, _ = librosa.pyin(wav, frame_length=1024, hop_length=256, center=False, sr=24000,
                                 fmin=librosa.note_to_hz('C2'),
                                 fmax=librosa.note_to_hz('C6'), fill_na=0)
     elif method == 'world':
-        wav, sr = librosa.load(wav_path, sr=24000)
         wav = (wav * 32767).astype(np.int16)
         wav = (wav / 32767).astype(np.float64)
-        _f0, t = pw.dio(wav, fs=24000, frame_period=256/sr*1000,
+        _f0, t = pw.dio(wav, fs=sr, frame_period=256/sr*1000,
                         f0_floor=librosa.note_to_hz('C2'),
                         f0_ceil=librosa.note_to_hz('C6'))
         f0 = pw.stonemask(wav, _f0, t, sr)
@@ -107,8 +113,15 @@ def get_f0(wav_path, method='pyin', padding=True):
     return f0
 
 
-def get_mcep(x, n_fft=1024, n_shift=256, sr=24000):
-    x, sr = load(x, sr=24000)
+def get_mcep(x_path, x_wav, n_fft=1024, n_shift=256, sr=24000):
+    if x_wav is None:
+        if x_path is not None:
+            x, _ = librosa.load(x, sr=sr)
+        else:
+            raise ValueError("Must provide either 'x_path' (string) or 'x_wav' (array)")
+    else:
+        x = x_wav
+        
     n_frame = (x.shape[0] // 256)
     x = np.pad(x, 384, mode='reflect')
     # n_frame = (len(x) - n_fft) // n_shift + 1
@@ -123,25 +136,27 @@ def get_mcep(x, n_fft=1024, n_shift=256, sr=24000):
     return mcep
 
 
-def get_matched_f0(x, y, method='world', n_fft=1024, n_shift=256):
+def get_matched_f0(x=None, y=None, x_wav=None, y_wav=None, method='world', n_fft=1024, n_shift=256):
     # f0_x = get_f0(x, method='pyin', padding=False)
     # f0_y = get_f0(y, method=method, padding=False)
-    f0_y = get_autotuned_f0(y, method, False)
+    f0_y = get_autotuned_f0(y, y_wav, method, False)
     # print(f0_y.max())
     # print(f0_y.min())
 
-    mcep_x = get_mcep(x, n_fft=n_fft, n_shift=n_shift)
-    mcep_y = get_mcep(y, n_fft=n_fft, n_shift=n_shift)
+    # -------- Code commented below is dtw + other matching stuff. For our purposes, x and y are the same so no need to perform matching ------
+    
+    # mcep_x = get_mcep(x, x_wav, n_fft=n_fft, n_shift=n_shift)
+    # mcep_y = get_mcep(y, y_wav, n_fft=n_fft, n_shift=n_shift)
 
-    _, path = fastdtw(mcep_x, mcep_y, dist=spatial.distance.euclidean)
-    twf = np.array(path).T
-    # f0_x = gen_mcep[twf[0]]
-    nearest = []
-    for i in range(len(f0_y)):
-        idx = np.argmax(1 * twf[0] == i)
-        nearest.append(twf[1][idx])
+    # _, path = fastdtw(mcep_x, mcep_y, dist=spatial.distance.euclidean)
+    # twf = np.array(path).T
+    # # f0_x = gen_mcep[twf[0]]
+    # nearest = []
+    # for i in range(len(f0_y)):
+    #     idx = np.argmax(1 * twf[0] == i)
+    #     nearest.append(twf[1][idx])
 
-    f0_y = f0_y[nearest]
+    # f0_y = f0_y[nearest]
 
     # f0_y = f0_y.astype(np.float32)
 
@@ -211,13 +226,8 @@ def show_plot(tensor):
     plt.show()
 
 
-def get_autotuned_f0(wav_path, method, padding, shift_semi=2): 
-    
-    f0_raw = get_f0(wav_path, method=method, padding=padding)
-    # print(f0_raw)
-
-    if shift_semi != 0:
-        f0_raw = f0_raw * (2 ** (shift_semi / 12))
+def get_autotuned_f0(wav_path, wav, method, padding): 
+    f0_raw = get_f0(wav_path, wav, method=method, padding=padding)
 
     voiced_mask = f0_raw > 0
     autotuned_f0 = np.copy(f0_raw)
@@ -226,9 +236,12 @@ def get_autotuned_f0(wav_path, method, padding, shift_semi=2):
         midi_notes = librosa.hz_to_midi(f0_raw[voiced_mask])
         snapped_midi = np.round(midi_notes)
         autotuned_f0[voiced_mask] = librosa.midi_to_hz(snapped_midi)
-    
+
+    # TODO: dont do median filters if we are streaming (that completely messes with the pitch snap of our model... but why?)
+    # num_frames = len(autotuned_f0)
+    # if num_frames >= 7:
     autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=51)
-    autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=11)
+    
     hybrid_f0 = gaussian_filter1d(autotuned_f0, sigma=2.0)
         
     return hybrid_f0
