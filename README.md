@@ -125,7 +125,8 @@ Tunable parameters aree configured in `train_consistency.py` near the top. Feel 
 ## TODO:
 - make loss graph
 - make ability to continue training from a model weight snapshot
-- qol changes to make it easier to switch between running on gpu and cpu
+- When project is done (i hope we get it done)
+    - clean up all the messy code for fun
 
 
 # Streaming
