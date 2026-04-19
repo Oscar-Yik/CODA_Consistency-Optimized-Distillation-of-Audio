@@ -136,10 +136,10 @@ def get_mcep(x_path, x_wav, n_fft=1024, n_shift=256, sr=24000):
     return mcep
 
 
-def get_matched_f0(x=None, y=None, x_wav=None, y_wav=None, method='world', n_fft=1024, n_shift=256):
+def get_matched_f0(x=None, y=None, x_wav=None, y_wav=None, method='world', n_fft=1024, n_shift=256, key=None):
     # f0_x = get_f0(x, method='pyin', padding=False)
     # f0_y = get_f0(y, method=method, padding=False)
-    f0_y = get_autotuned_f0(y, y_wav, method, False)
+    f0_y = get_autotuned_f0(y, y_wav, method, False, key=key)
     # print(f0_y.max())
     # print(f0_y.min())
 
@@ -226,7 +226,47 @@ def show_plot(tensor):
     plt.show()
 
 
-def get_autotuned_f0(wav_path, wav, method, padding):
+def _get_key_notes(key=None):
+    """Returns a set of valid MIDI note classes (0-11) for the given key.
+    If key is None, returns all 12 chromatic notes."""
+
+    if key is None:
+        return set(range(12))
+
+    # Major and minor scale intervals (in semitones from root)
+    scales = {
+        'major': [0, 2, 4, 5, 7, 9, 11],
+        'minor': [0, 2, 3, 5, 7, 8, 10]
+    }
+
+    # Parse key string (e.g., "C", "C#", "Db", "C major", "A minor")
+    key = key.strip().lower()
+
+    # Extract scale type
+    if 'major' in key:
+        scale = scales['major']
+        key = key.replace('major', '').strip()
+    elif 'minor' in key or 'min' in key:
+        scale = scales['minor']
+        key = key.replace('minor', '').replace('min', '').strip()
+    else:
+        scale = scales['major']  # Default to major
+
+    # Parse root note (C, C#, Db, etc.)
+    note_map = {
+        'c': 0, 'c#': 1, 'db': 1, 'd': 2, 'd#': 3, 'eb': 3,
+        'e': 4, 'f': 5, 'f#': 6, 'gb': 6, 'g': 7, 'g#': 8,
+        'ab': 8, 'a': 9, 'a#': 10, 'bb': 10, 'b': 11
+    }
+
+    if key not in note_map:
+        raise ValueError(f"Invalid key: {key}. Use format like 'C', 'C# major', 'A minor', etc.")
+
+    root = note_map[key]
+    return set((root + interval) % 12 for interval in scale)
+
+
+def get_autotuned_f0(wav_path, wav, method, padding, key=None):
     f0_raw = get_f0(wav_path, wav, method=method, padding=padding)
 
     voiced_mask = f0_raw > 0
@@ -234,7 +274,35 @@ def get_autotuned_f0(wav_path, wav, method, padding):
 
     if np.any(voiced_mask):
         midi_notes = librosa.hz_to_midi(f0_raw[voiced_mask])
-        snapped_midi = np.round(midi_notes)
+
+        if key is None:
+            # Original behavior: snap to nearest chromatic note
+            snapped_midi = np.round(midi_notes)
+        else:
+            # Snap to nearest note in the specified key
+            valid_notes = _get_key_notes(key)
+            snapped_midi = np.zeros_like(midi_notes)
+
+            for i, note in enumerate(midi_notes):
+                octave = int(note // 12)
+                # Find nearest valid note in the key
+                note_class = note % 12
+                valid_note_classes = np.array(list(valid_notes))
+                distances = np.abs(valid_note_classes - note_class)
+
+                # Handle wraparound (e.g., B to C)
+                distances = np.minimum(distances, 12 - distances)
+                nearest_idx = np.argmin(distances)
+                nearest_note_class = valid_note_classes[nearest_idx]
+
+                # Check if we need to go up or down an octave
+                if note_class - nearest_note_class > 6:
+                    octave += 1
+                elif nearest_note_class - note_class > 6:
+                    octave -= 1
+
+                snapped_midi[i] = octave * 12 + nearest_note_class
+
         autotuned_f0[voiced_mask] = librosa.midi_to_hz(snapped_midi)
 
     # Adaptive median filter - use largest valid odd kernel size
