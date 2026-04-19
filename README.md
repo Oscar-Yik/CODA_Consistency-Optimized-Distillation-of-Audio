@@ -133,13 +133,12 @@ Still currently a work in progress. Right now it just takes in mic input, perfor
 
 <br>
 If you must run using WSL, then you may come across this error:
+
 ```
 ALSA lib confmisc.c:855:(parse_card) cannot find card '0'
 ALSA lib conf.c:5204:(_snd_config_evaluate) function snd_func_card_inum returned error: No such file or directory
 ALSA lib confmisc.c:422:(snd_func_concat) error evaluating strings
-
 ...
-
 OSError: [Errno -9996] Invalid output device (no default output device)
 ```
 
