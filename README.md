@@ -127,6 +127,37 @@ Tunable parameters aree configured in `train_consistency.py` near the top. Feel 
 - make ability to continue training from a model weight snapshot
 - qol changes to make it easier to switch between running on gpu and cpu
 
+
+# Streaming
+Still currently a work in progress. Right now it just takes in mic input, performs pre-processing and throws the results away, and directly echos back the input. Running this using WSL makes the hardware latency very very high, so it will be better to run it from windows directly instead.
+
+<br>
+If you must run using WSL, then you may come across this error:
+```
+ALSA lib confmisc.c:855:(parse_card) cannot find card '0'
+ALSA lib conf.c:5204:(_snd_config_evaluate) function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) error evaluating strings
+
+...
+
+OSError: [Errno -9996] Invalid output device (no default output device)
+```
+
+To fix, check that PulseServer exists with `ls /mnt/wslg/PulseServer`. If it doesnt exist, run `wsl --update` from powershell then restart wsl. Then put
+```
+export PULSE_SERVER=unix:/mnt/wslg/PulseServer
+export DISPLAY=:0
+```
+
+at the bottom of `~/.bashrc` and run `source ~/bashrc`. After that, run
+
+```
+sudo apt update
+sudo apt install pulseaudio-utils libasound2-plugins
+```
+
+Then run `pactl info`. This should show something like `Server String: unix:/mnt/wslg/PulseServer`. If it shows that, then it means it should work and you can try running `uv run stream.py` again.
+
 # Possible Student Models
 - 1D CNN
 - Others
