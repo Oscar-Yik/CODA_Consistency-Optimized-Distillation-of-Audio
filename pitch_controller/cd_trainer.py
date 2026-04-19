@@ -4,7 +4,6 @@ import copy
 
 from models.consistency import ConsistencyPitcher
 from models.unet import UNetPitcher
-from torch.amp import autocast, GradScaler
 
 
 class ConsistencyTrainer:
@@ -23,8 +22,6 @@ class ConsistencyTrainer:
         self.ema_mu = 0.999 # how much of the target student parameters we keep each update
         self.losses = []
 
-        self.scaler = GradScaler('cuda')
-
     def update_target_model(self):
         with torch.no_grad():
             # for each parameter, we "blend" the online and target student, making the target a smoothed out version of online student
@@ -35,43 +32,48 @@ class ConsistencyTrainer:
         self.optimizer.zero_grad()
 
         t_int = noise_scheduler.timesteps[t_idx].item()
-        t_prev = noise_scheduler.timesteps[t_idx + 1] if t_idx + 1 < len(noise_scheduler.timesteps) else 0 # if we r at last step, t_prev is 0
+        t_prev_int = noise_scheduler.timesteps[t_idx + 1] if t_idx + 1 < len(noise_scheduler.timesteps) else 0 # if we r at last step, t_prev is 0
+
+        batch_size = source_x.shape[0]
+        t_batch = torch.tensor([t_int] * batch_size, device=self.device)
+        t_prev_batch = torch.tensor([t_prev_int] * batch_size, device=self.device)
 
         noise = torch.randn_like(source_x)
-        t_batch = torch.tensor([t] * source_x.shape[0], device=self.device)
         x_t = noise_scheduler.add_noise(source_x, noise, t_batch)
+
+        #  teacher x_t -> x_{t-1}
+        with torch.no_grad():
+            model_output = self.teacher(x=x_t, mean=mean, f0=f0_ref, t=t_batch)
+
+            step_results = noise_scheduler.step(model_output, t_int, x_t)
+            x_t_prev = step_results.prev_sample.to(self.device)
+            teacher_x0 = step_results.pred_original_sample.to(self.device)
+
+        # online student predicts x_0 from x_t (gradients flow here)
+        pred_online = self.student(x_t, t_batch, mean, f0_ref, noise_scheduler)
+
+        # target student predicts x_0 from x_{t-1} (EMA model, no gradients)
+        with torch.no_grad():
+            pred_target = self.target_student(x_t_prev, t_prev_batch, mean, f0_ref, noise_scheduler)
         
-        with autocast('cuda'):
-            #  teacher x_t -> x_{t-1}
-            with torch.no_grad():
-                model_output = self.teacher(x=x_t, mean=mean, f0=f0_ref, t=t)
-                x_t_prev_cpu = noise_scheduler.step(model_output, t, x_t).prev_sample
-
-                x_t_prev = x_t_prev_cpu.to(self.device)
-                noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to(self.device)
-
-            # online student predicts x_0 from x_t (gradients flow here)
-            t_gpu = torch.as_tensor(t).to(self.device)
-            t_prev_gpu = torch.as_tensor(t_prev).to(self.device)
-            pred_online = self.student(x_t, t_gpu, mean, f0_ref, noise_scheduler)
-
-            # target student predicts x_0 from x_{t-1} (EMA model, no gradients)
-            with torch.no_grad():
-                pred_target = self.target_student(x_t_prev, t_prev_gpu, mean, f0_ref, noise_scheduler)
-
+        pred_online_fp32 = pred_online.float()
+        pred_target_fp32 = pred_target.float()
+        teacher_x0_fp32 = teacher_x0.float()
     
-            loss = F.mse_loss(pred_online, pred_target)    
-            # loss = F.huber_loss(pred_online, pred_target, delta=0.5)    
+        # Consistency distillation 
+        cd_loss = F.huber_loss(pred_online_fp32, pred_target_fp32, delta=0.5)    
+        anchor_loss = F.huber_loss(pred_online_fp32, teacher_x0_fp32.detach(), delta=0.5)
+        loss = cd_loss + anchor_loss
 
-        self.scaler.scale(loss).backward()
+        # Knowledge distillation
+        # loss = F.mse_loss(pred_online, teacher_x0.detach())
 
-        # Unscale the gradients first, then clip them to a maximum norm of 1.0
-        self.scaler.unscale_(self.optimizer)
+        loss.backward()
+
+        # Clip them to a maximum norm of 1.0
         torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
 
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-
+        self.optimizer.step()
         self.update_target_model()
         
         return loss.item()

@@ -154,17 +154,19 @@ if __name__ == "__main__":
         mean = of_mean 
 
     for epoch in range(start_epoch, args.epochs + 1):
-        print(f'Epoch: {epoch} [iteration: {global_step}]')
         trainer.student.train()
         losses = []
         trajectory_data = []
 
         if args.overfit_one_sample:
+            if epoch % args.save_every == 0:
+                print(f'Epoch: {epoch} [iteration: {global_step}]')
             t_idx = torch.randint(0, len(noise_scheduler.timesteps) - 1, (1,)).item()
             loss = trainer.train_step(mel, mean, f0, noise_scheduler, t_idx)
             trajectory_data.append((global_step, epoch, t_idx, loss))
             global_step += 1
         else:
+            print(f'Epoch: {epoch} [iteration: {global_step}]')
             for step, batch in enumerate(tqdm(train_loader)):
                 # make spectrogram range from -1 to 1
                 mel = batch['mel1'].to(args.device)
