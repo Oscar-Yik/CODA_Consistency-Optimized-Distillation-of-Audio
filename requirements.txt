@@ -7,6 +7,7 @@ music21
 numpy
 pandas
 pretty_midi
+pyaudio
 pysptk
 pyworld
 scipy

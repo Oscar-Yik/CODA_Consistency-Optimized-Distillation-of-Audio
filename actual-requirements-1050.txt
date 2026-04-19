@@ -61,6 +61,7 @@ pillow==12.1.1
 platformdirs==4.9.4
 pooch==1.9.0
 pretty-midi==0.2.11
+pyaudio==0.2.14
 pycparser==3.0
 pygments==2.20.0
 pyparsing==3.3.2
@@ -69,7 +70,7 @@ python-dateutil==2.9.0.post0
 pyworld==0.3.5
 pyyaml==6.0.3
 regex==2026.4.4
-requests==2.28.1
+requests>=2.31.0
 rich==14.3.3
 safetensors==0.7.0
 scikit-learn==1.8.0

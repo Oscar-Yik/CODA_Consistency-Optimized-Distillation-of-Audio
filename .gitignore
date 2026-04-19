@@ -1,3 +1,4 @@
 **/__pycache__/
 data/
 pitch_controller/logs_consistency/
+.DS_Store

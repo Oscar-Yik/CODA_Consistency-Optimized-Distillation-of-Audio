@@ -21,7 +21,7 @@ def compare_pitch_hybrid(wav_path, med_kernel=5, gauss_sigma=1.0):
     f0_original = get_f0(wav_path, method='world', padding=False)
     
     # 2. Get your Autotuned F0 (already has a small medfilt internally)
-    f0_autotuned = get_autotuned_f0(wav_path, method='world', padding=False)
+    f0_autotuned = get_autotuned_f0(wav_path, wav=None, method='world', padding=False)
     
     # 3. Apply the Hybrid Smoothing (Median + Gaussian)
     # We take the autotuned stuff and run the Gaussian over it
@@ -64,8 +64,8 @@ def plot_f0_comparison(wav_path1, wav_path2, label1="File 1", label2="File 2", s
     """
     # 1. Extract F0 for both files
     # Using 'world' method as seen in your utils.py for consistency
-    f0_1 = get_f0(wav_path1, method='world', padding=False)
-    f0_2 = get_f0(wav_path2, method='world', padding=False)
+    f0_1 = get_f0(wav_path1, wav=None, method='world', padding=False)
+    f0_2 = get_f0(wav_path2, wav=None, method='world', padding=False)
     
     # 2. Create time axes in seconds
     time1 = np.arange(len(f0_1)) * (hop_length / sr)
