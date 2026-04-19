@@ -52,9 +52,9 @@ def get_world_mel(wav_path=None, sr=24000, wav=None):
 
     if wav_path is not None:
         wav, _ = librosa.load(wav_path, sr=24000)
-    wav = (wav * 32767).astype(np.int16)
-    wav = (wav / 32767).astype(np.float64)
-    # wav = wav.astype(np.float64)
+    # wav = (wav * 32767).astype(np.int16)
+    # wav = (wav / 32767).astype(np.float64)
+    wav = wav.astype(np.float64)
     wav = wav[:(wav.shape[0] // 256) * 256]
 
     _f0, t = pw.dio(wav, sr, frame_period=256/sr*1000) # using a fixed frame period improves performance
@@ -226,24 +226,34 @@ def show_plot(tensor):
     plt.show()
 
 
-def get_autotuned_f0(wav_path, wav, method, padding): 
+def get_autotuned_f0(wav_path, wav, method, padding):
     f0_raw = get_f0(wav_path, wav, method=method, padding=padding)
 
     voiced_mask = f0_raw > 0
     autotuned_f0 = np.copy(f0_raw)
-    
+
     if np.any(voiced_mask):
         midi_notes = librosa.hz_to_midi(f0_raw[voiced_mask])
         snapped_midi = np.round(midi_notes)
         autotuned_f0[voiced_mask] = librosa.midi_to_hz(snapped_midi)
 
-    # TODO: dont do median filters if we are streaming (that completely messes with the pitch snap of our model... but why?)
-    # num_frames = len(autotuned_f0)
-    # if num_frames >= 7:
-    autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=51)
-    
+    # Adaptive median filter - use largest valid odd kernel size
+    num_frames = len(autotuned_f0)
+    desired_kernel = 51
+
+    if num_frames >= desired_kernel:
+        kernel_size = desired_kernel
+    elif num_frames >= 3:  # minimum kernel size for median filter
+        # Use largest odd number <= num_frames
+        kernel_size = num_frames if num_frames % 2 == 1 else num_frames - 1
+    else:
+        kernel_size = None  # too small to filter
+
+    if kernel_size is not None:
+        autotuned_f0 = signal.medfilt(autotuned_f0, kernel_size=kernel_size)
+
     hybrid_f0 = gaussian_filter1d(autotuned_f0, sigma=2.0)
-        
+
     return hybrid_f0
 
 
