@@ -384,6 +384,73 @@ def generate_dataset(input_dir, output_dir, sr=24000):
         sf.write(os.path.join(output_dir, "off_tune", f), y_off, sr)
 
 
+
+def quick_get_f0(wav, sr, method='pyin', padding=True):
+    if method == 'pyin':
+        wav = wav[:(wav.shape[0] // 256) * 256]
+        wav = np.pad(wav, 384, mode='reflect')
+        f0, _, _ = librosa.pyin(wav, frame_length=1024, hop_length=256, center=False, sr=24000,
+                                fmin=librosa.note_to_hz('C2'),
+                                fmax=librosa.note_to_hz('C6'), fill_na=0)
+    elif method == 'world':
+        wav = (wav * 32767).astype(np.int16)
+        wav = (wav / 32767).astype(np.float64)
+        _f0, t = pw.dio(wav, fs=24000, frame_period=256/sr*1000,
+                        f0_floor=librosa.note_to_hz('C2'),
+                        f0_ceil=librosa.note_to_hz('C6'))
+        f0 = pw.stonemask(wav, _f0, t, sr)
+        f0 = f0[:-1]
+
+    if padding is True:
+        if f0.shape[-1] % 8 !=0:
+            f0 = np.pad(f0, ((0, 8-f0.shape[-1] % 8)), 'constant', constant_values=0)
+
+    return f0
+
+def quick_get_mel(wav):
+    wav = wav[:(wav.shape[0] // 256)*256]
+    wav = np.pad(wav, 384, mode='reflect')
+    stft = librosa.core.stft(wav, n_fft=1024, hop_length=256, win_length=1024, window='hann', center=False)
+    stftm = np.sqrt(np.real(stft) ** 2 + np.imag(stft) ** 2 + (1e-9))
+    mel_spectrogram = np.matmul(mel_basis, stftm)
+    if mel_spectrogram.shape[-1] % 8 != 0:
+        mel_spectrogram = np.pad(mel_spectrogram, ((0, 0), (0, 8 - mel_spectrogram.shape[-1] % 8)), 'minimum')
+
+    log_mel_spectrogram = np.log(np.clip(mel_spectrogram, a_min=1e-5, a_max=None))
+    return log_mel_spectrogram
+
+def quick_get_world_mel(wav=None, sr=24000):
+    start_time = time.time()
+
+    wav = (wav * 32767).astype(np.int16)
+    wav = (wav / 32767).astype(np.float64)
+    # wav = wav.astype(np.float64)
+    wav = wav[:(wav.shape[0] // 256) * 256]
+
+    # _f0, t = pw.dio(wav, sr, frame_period=256/sr*1000)
+    _f0, t = pw.dio(wav, sr)
+    f0 = pw.stonemask(wav, _f0, t, sr)
+    sp = pw.cheaptrick(wav, f0, t, sr)
+    ap = pw.d4c(wav, f0, t, sr)
+    wav_hat = pw.synthesize(f0 * 0, sp, ap, sr)
+    # wav_hat = pw.synthesize(f0 * 0, sp, ap, sr, frame_period=256/sr*1000)
+
+    # pyworld output does not pad left
+    wav_hat = wav_hat[:len(wav)]
+    # wav_hat = wav_hat[256//2: len(wav)+256//2]
+    assert len(wav_hat) == len(wav)
+    wav = wav_hat.astype(np.float32)
+    wav = np.pad(wav, 384, mode='reflect')
+    stft = librosa.core.stft(wav, n_fft=1024, hop_length=256, win_length=1024, window='hann', center=False)
+    stftm = np.sqrt(np.real(stft) ** 2 + np.imag(stft) ** 2 + (1e-9))
+    mel_spectrogram = np.matmul(mel_basis, stftm)
+    if mel_spectrogram.shape[-1] % 8 != 0:
+        mel_spectrogram = np.pad(mel_spectrogram, ((0, 0), (0, 8 - mel_spectrogram.shape[-1] % 8)), 'minimum')
+
+    log_mel_spectrogram = np.log(np.clip(mel_spectrogram, a_min=1e-5, a_max=None))
+    # print(f"mel duration: {time.time() - start_time}")
+    return log_mel_spectrogram
+
 if __name__ == '__main__':
     mel = get_mel('target.wav')
     f0 = get_f0('target.wav')

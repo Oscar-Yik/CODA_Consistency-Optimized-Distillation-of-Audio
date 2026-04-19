@@ -1,0 +1,10 @@
+{
+    "config": "config/DiffWorld_24k.yaml",
+    "ckpt": "ckpt_consistency/consistency_model_14.pt",
+    "out_dir": "inference_results",
+    "num_samples": 15,
+    "vocoder_dir": "../ckpts/bigvgan_24khz_100band/g_05000000.pt",
+    "data_dir": "../data/",
+    "lpc_dir": "world",
+    "train_frames": 128
+}      
