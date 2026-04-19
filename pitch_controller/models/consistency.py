@@ -1,6 +1,6 @@
 from .base import BaseModule
 from .unet import UNetPitcher
-
+import torch
 
 class ConsistencyPitcher(BaseModule):
     # a wrapper for the student that turns the UNet (which outputs noise) into a consistency function (that outputs clean audio)
@@ -18,12 +18,13 @@ class ConsistencyPitcher(BaseModule):
 
         # UNet predicts noise (epsilon), convert to x_0 prediction
         epsilon_pred = self.unet(x=x, mean=mean, f0=f0, t=t)
-        alpha_t = noise_scheduler.alphas_cumprod[t]
-        sqrt_alpha_t = alpha_t.sqrt().view(1, 1, 1)
-        sqrt_one_minus_alpha_t = (1 - alpha_t).sqrt().view(1, 1, 1)
+        alpha_t = noise_scheduler.alphas_cumprod.to(x.device)[t]
+        sqrt_alpha_t = alpha_t.sqrt().view(-1, 1, 1)
+        sqrt_one_minus_alpha_t = (1 - alpha_t).sqrt().view(-1, 1, 1)
 
         # Convert epsilon prediction to x_0 prediction
         x0_pred = (x - sqrt_one_minus_alpha_t * epsilon_pred) / sqrt_alpha_t
+        x0_pred = torch.clamp(x0_pred, min=-2.0, max=2.0)
 
         # Apply consistency model parameterization
         return c_skip * x + c_out * x0_pred
@@ -40,8 +41,8 @@ class ConsistencyPitcher(BaseModule):
     def _consistency_dims(self, t, noise_scheduler):
         # formula and constants from the original Consistency Models paper (https://arxiv.org/pdf/2303.01469) "Additional Experimental Details" Section on page 25, 26
         sd = self.sigma_data
-        alpha_t = noise_scheduler.alphas_cumprod[t]
-        sigma   = ((1 - alpha_t) / alpha_t).sqrt().view(1, 1, 1)
+        alpha_t = noise_scheduler.alphas_cumprod.to(t.device)[t]
+        sigma   = ((1 - alpha_t) / alpha_t).sqrt().view(-1, 1, 1)
 
         # epsilon: sigma at the smallest (least noisy) timestep in the schedule
         epsilon = self._get_epsilon(noise_scheduler)
