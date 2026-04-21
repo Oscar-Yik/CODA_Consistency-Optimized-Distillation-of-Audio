@@ -6,21 +6,33 @@ class ConsistencyPitcher(BaseModule):
     # a wrapper for the student that turns the UNet (which outputs noise) into a consistency function (that outputs clean audio)
     # clean audio = (c_skip * noisy input) + (cout * x0_prediction)
 
-    def __init__(self, unet: UNetPitcher, sigma_data=0.5):
+    def __init__(self, unet: UNetPitcher, sigma_data=0.5, sigma_min=0.002):
         super().__init__()
         self.unet = unet
         self.sigma_data = sigma_data
-        self._cached_epsilon = None
-        self._cached_timesteps_len = None
+        self.sigma_min = sigma_min
 
     def forward(self, x, t, mean, f0, noise_scheduler):
         c_skip, c_out = self._consistency_dims(t, noise_scheduler)
 
-        # UNet predicts noise (epsilon), convert to x_0 prediction
+        # UNet predicts noise (epsilon)
         epsilon_pred = self.unet(x=x, mean=mean, f0=f0, t=t)
+
+        # -- FP32 SHIELD --
+        epsilon_pred = epsilon_pred.float()
+        x = x.float()
+        c_skip = c_skip.float()
+        c_out = c_out.float()
+        # -----------------
+
         alpha_t = noise_scheduler.alphas_cumprod.to(x.device)[t]
-        sqrt_alpha_t = alpha_t.sqrt().view(-1, 1, 1)
-        sqrt_one_minus_alpha_t = (1 - alpha_t).sqrt().view(-1, 1, 1)
+
+        if alpha_t.dim() == 0:  # scalar
+            sqrt_alpha_t = alpha_t.sqrt().view(1, 1, 1)
+            sqrt_one_minus_alpha_t = (1 - alpha_t).sqrt().view(1, 1, 1)
+        else:  # batch [B]
+            sqrt_alpha_t = alpha_t.sqrt().view(-1, 1, 1)
+            sqrt_one_minus_alpha_t = (1 - alpha_t).sqrt().view(-1, 1, 1)
 
         # Convert epsilon prediction to x_0 prediction
         x0_pred = (x - sqrt_one_minus_alpha_t * epsilon_pred) / sqrt_alpha_t
@@ -29,26 +41,22 @@ class ConsistencyPitcher(BaseModule):
         # Apply consistency model parameterization
         return c_skip * x + c_out * x0_pred
 
-    def _get_epsilon(self, noise_scheduler):
-        # Cache epsilon since it only depends on the timestep schedule
-        if self._cached_epsilon is None or self._cached_timesteps_len != len(noise_scheduler.timesteps):
-            t_min = noise_scheduler.timesteps[-1]
-            alpha_min = noise_scheduler.alphas_cumprod[t_min]
-            self._cached_epsilon = ((1 - alpha_min) / alpha_min).sqrt().view(1, 1, 1)
-            self._cached_timesteps_len = len(noise_scheduler.timesteps)
-        return self._cached_epsilon
-
     def _consistency_dims(self, t, noise_scheduler):
-        # formula and constants from the original Consistency Models paper (https://arxiv.org/pdf/2303.01469) "Additional Experimental Details" Section on page 25, 26
+        # formula and constants from the original Consistency Models paper (https://arxiv.org/pdf/2303.01469)
+        # Using boundary condition formulation from OpenAI implementation
         sd = self.sigma_data
+        sigma_min = self.sigma_min
         alpha_t = noise_scheduler.alphas_cumprod.to(t.device)[t]
-        sigma   = ((1 - alpha_t) / alpha_t).sqrt().view(-1, 1, 1)
+        
+        # Handle both scalar and batch timesteps
+        if alpha_t.dim() == 0:  # scalar
+            sigma = ((1 - alpha_t) / alpha_t).sqrt().view(1, 1, 1)
+        else:  # batch [B]
+            sigma = ((1 - alpha_t) / alpha_t).sqrt().view(-1, 1, 1)
 
-        # epsilon: sigma at the smallest (least noisy) timestep in the schedule
-        epsilon = self._get_epsilon(noise_scheduler)
-
-        c_skip = sd**2 / ((sigma - epsilon)**2 + sd**2)
-        c_out  = sd * (sigma - epsilon) / (sigma**2 + sd**2)**0.5
+        # Boundary condition formulation (for distillation)
+        c_skip = sd**2 / ((sigma - sigma_min)**2 + sd**2)
+        c_out = (sigma - sigma_min) * sd / (sigma**2 + sd**2)**0.5
 
         return c_skip, c_out
         
