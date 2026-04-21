@@ -8,6 +8,7 @@ def plot_eval_metrics(csv_path, save_path):
     epochs = []
     mel_mses = []
     f0_maes = []
+    blur_ratios = []
     
     print(f"Reading evaluation data from {csv_path}...")
     
@@ -16,6 +17,7 @@ def plot_eval_metrics(csv_path, save_path):
         for row in reader:
             epochs.append(int(row['epoch']))
             mel_mses.append(float(row['mel_mse']))
+            blur_ratios.append(float(row['blur_ratio']))
             
             # Handle cases where F0 tracking might have failed (saved as empty or None)
             f0_val = row['f0_mae']
@@ -24,8 +26,8 @@ def plot_eval_metrics(csv_path, save_path):
             else:
                 f0_maes.append(None) # Keep list aligned
 
-    # Create a figure with 2 subplots (stacked vertically)
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    # Create a figure with 3 subplots (stacked vertically)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
     
     # --- Top Subplot: Mel Spectrogram MSE ---
     ax1.plot(epochs, mel_mses, marker='o', color='tab:blue', linewidth=2, label='Mel MSE')
@@ -34,17 +36,24 @@ def plot_eval_metrics(csv_path, save_path):
     ax1.grid(True, linestyle='--', alpha=0.7)
     ax1.legend()
 
+    # --- Middle Subplot: Blur Ratio ---
+    ax2.plot(epochs, blur_ratios, marker='o', color='tab:red', linewidth=2, label='Blur Ratio')
+    ax2.set_title('Blur ratio (Average Blur)')
+    ax2.set_ylabel('Blur Ratio')
+    ax2.grid(True, linestyle='--', alpha=0.7)
+    ax2.legend()
+
     # --- Bottom Subplot: F0 Pitch Tracking MAE ---
     # Filter out None values just for plotting the line
     valid_epochs = [e for e, f in zip(epochs, f0_maes) if f is not None]
     valid_f0s = [f for f in f0_maes if f is not None]
     
-    ax2.plot(valid_epochs, valid_f0s, marker='s', color='tab:orange', linewidth=2, label='F0 MAE (Hz)')
-    ax2.set_title('F0 Pitch Tracking Error (Melody Accuracy)')
-    ax2.set_xlabel('Epoch')
-    ax2.set_ylabel('Mean Absolute Error (Hz)')
-    ax2.grid(True, linestyle='--', alpha=0.7)
-    ax2.legend()
+    ax3.plot(valid_epochs, valid_f0s, marker='s', color='tab:orange', linewidth=2, label='F0 MAE (Hz)')
+    ax3.set_title('F0 Pitch Tracking Error (Melody Accuracy)')
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('Mean Absolute Error (Hz)')
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    ax3.legend()
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=150) # High resolution for reports
@@ -104,16 +113,16 @@ def plot_trajectory_loss(csv_path, save_path, sample_every=5):
 
 if __name__ == "__main__":
     # Change sample_every=1 if you want to see literally every single epoch
-    file_name = "trajectory_loss_1776497415.0009303"
+    # file_name = "trajectory_loss_1776497415.0009303"
 
-    plot_trajectory_loss(
-        f'logs_consistency/{file_name}.csv', 
-        f'logs_consistency/{file_name}.png',
-        sample_every=3
-    )
+    # plot_trajectory_loss(
+    #     f'logs_consistency/{file_name}.csv', 
+    #     f'logs_consistency/{file_name}.png',
+    #     sample_every=3
+    # )
 
     # Mel MSE and f0 MAE Graphs
-    csv_file = 'logs_consistency/eval_metrics_1776497415.011502.csv' 
+    csv_file = 'logs_consistency/eval_metrics_1776671413.5251737.csv' 
     output_image = 'logs_consistency/eval_metrics_graph.png'
     
     # Uncomment to run:
