@@ -1,7 +1,7 @@
 {
   "audio": {
-    "chunk_size": 4096,
-    "window_size": 2048,
+    "chunk_size": 8192,
+    "window_size": 4096,
     "raw_sample_rate": 48000,
     "target_sample_rate": 24000
   },
@@ -15,7 +15,7 @@
   },
   "models": {
     "diffusion_config": "pitch_controller/config/DiffWorld_24k.yaml",
-    "consistency_checkpoint": "pitch_controller/ckpt_consistency/consistency_overfit_40.pt",
+    "consistency_checkpoint": "pitch_controller/ckpt_consistency/consistency_model_8.pt",
     "vocoder_type": "griffin_lim",
     "vocoder_checkpoint": "ckpts/bigvgan_24khz_100band/g_05000000.pt"
   },

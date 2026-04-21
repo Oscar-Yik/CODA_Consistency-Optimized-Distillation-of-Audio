@@ -59,16 +59,21 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config):
         source_x = minmax_norm_diff(source_mel, vmax=max_mel, vmin=min_mel)
 
         # Model inference
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         model_start = time.perf_counter()
         t = torch.tensor([0], device=device)
         model_output = model(x=source_x, t=t, mean=source_x, f0=f0_ref, noise_scheduler=noise_scheduler)
         pred_mel = reverse_minmax_norm_diff(model_output, vmax=max_mel, vmin=min_mel)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         model_time = (time.perf_counter() - model_start) * 1000
 
         # Vocoder
         vocoder_start = time.perf_counter()
-        print(f"Mel shape: {pred_mel.shape}, device: {pred_mel.device}")
         output_wav = hifigan(pred_mel)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         output_wav = output_wav.squeeze().cpu().numpy().astype(np.float32)
         vocoder_time = (time.perf_counter() - vocoder_start) * 1000
 
@@ -119,16 +124,21 @@ if __name__ == '__main__':
 
     print("Models loaded successfully")
 
+    # Warmup pass to avoid cold start
+    print("Warming up models...")
+    import time
+    dummy_mel = torch.randn(1, mel_cfg['n_mels'], 8).to(device)
+    dummy_f0 = torch.randn(1, 8).to(device)
+    t = torch.tensor([0], device=device)
 
-
-    # Try compiling models for speed (PyTorch 2.0+)
-    # try:
-    #     print("Compiling models with torch.compile...")
-    #     model = torch.compile(model, mode='reduce-overhead')
-    #     hifigan = torch.compile(hifigan, mode='reduce-overhead')
-    #     print("Compilation complete")
-    # except Exception as e:
-    #     print(f"Could not compile models: {e}")
+    warmup_start = time.perf_counter()
+    with torch.no_grad():
+        _ = model(x=dummy_mel, t=t, mean=dummy_mel, f0=dummy_f0, noise_scheduler=noise_scheduler)
+        _ = hifigan(dummy_mel)
+    if use_gpu:
+        torch.cuda.synchronize()
+    warmup_time = (time.perf_counter() - warmup_start) * 1000
+    print(f"Warmup complete: {warmup_time:.1f}ms")
 
     # Streamer
     audio_processor = create_audio_processor(model, hifigan, noise_scheduler, device, config)
