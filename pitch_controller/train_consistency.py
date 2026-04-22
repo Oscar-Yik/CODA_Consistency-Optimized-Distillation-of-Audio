@@ -1,4 +1,4 @@
-import os, yaml, csv, json, time, shutil
+import os, yaml, csv, json, shutil
 import numpy as np
 from tqdm import tqdm
 from types import SimpleNamespace
@@ -106,7 +106,11 @@ if __name__ == "__main__":
 
     collate_fn = VCDecLPCBatchCollate(args.train_frames)
 
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
+    if args.num_workers == 0:
+        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
+                                collate_fn=collate_fn, num_workers=0, drop_last=False)
+    else: 
+        train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True,
                               collate_fn=collate_fn, num_workers=args.num_workers, drop_last=True,
                               pin_memory=True, prefetch_factor=2)
 
@@ -168,19 +172,14 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
 
     # -- 2. NEW Evaluation Metrics Log --
-    eval_log_path = f'{args.log_dir}/eval_metrics_{time.time()}.csv'
+    eval_log_path = f'{args.log_dir}/eval_metrics.csv'
     with open(eval_log_path, 'w', newline='') as f:
-        csv.writer(f).writerow(['epoch', 'mel_mse', 'f0_mae', 'mel_l1', 'blur_ratio'])
+        csv.writer(f).writerow(['epoch', 'mel_mse', 'f0_mae', 'blur_ratio', 'mel_mse_full'])
 
     # -- 3. Save all config to log_dir --
     persist_config(args.log_dir)
 
-    curriculum_end_epoch = min(args.curriculum_end_epoch, args.epochs)
-
     for epoch in range(start_epoch, args.epochs + 1):
-
-        progress = min(1.0, epoch / curriculum_end_epoch)
-        max_t_idx_curriculum = int(args.curriculum_start_t_idx * (1 - progress) + args.curriculum_end_t_idx * progress)
 
         trainer.student.train()
         losses = []
@@ -188,8 +187,8 @@ if __name__ == "__main__":
         if epoch % args.save_every == 0:
             print(f'Epoch: {epoch} [iteration: {global_step}]')
 
-        # for step, batch in enumerate(tqdm(train_loader)):
-        for step, batch in enumerate(tqdm(train_loader)):
+        loader = train_loader if args.overfit_one_sample else tqdm(train_loader)
+        for step, batch in enumerate(loader):
             # make spectrogram range from -1 to 1
             mel = batch['mel1'].to(args.device)
             mel = minmax_norm_diff(mel, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
@@ -206,33 +205,32 @@ if __name__ == "__main__":
             mean = minmax_norm_diff(mean, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
 
             # Randomly sample a timestep index from our set of 50
-            current_min_t = min(max_t_idx_curriculum, len(noise_scheduler.timesteps) - 2)
-            max_t_idx = len(noise_scheduler.timesteps) - 2
+            max_t_idx = len(noise_scheduler.timesteps) - 1
+            # current_min_t = min(max_t_idx_curriculum, max_t_idx)
 
-            t_idx = torch.randint(current_min_t, max_t_idx + 1, (1,)).item()
+            t_idx = torch.randint(0, max_t_idx + 1, (1,)).item()
             loss = trainer.train_step(mel, mean, f0, noise_scheduler, t_idx)
 
             global_step += 1
 
         if epoch % args.save_every > 0:
             continue
-
-        print('Saving model...\n')
-        torch.save(trainer.target_student.state_dict(), f"{args.ckpt_dir}/consistency_model_{epoch}.pt")
+        
+        if not args.overfit_one_sample:
+            print('Saving model...\n')
+            torch.save(trainer.target_student.state_dict(), f"{args.ckpt_dir}/consistency_model_{epoch}.pt")
 
         print('Inference and Evaluation...\n')
         trainer.target_student.eval()
         with torch.no_grad():
             # 2. Run Student (1 Step from pure noise)
             noise = torch.randn_like(val_mean_norm)
-            t_max = torch.tensor([noise_scheduler.timesteps[25]], device=args.device)
+            t_max = torch.tensor([noise_scheduler.timesteps[50]], device=args.device)
             noise_input = noise_scheduler.add_noise(gt_mel_norm[0:1], noise, t_max)
             pred = trainer.target_student(noise_input, t_max, val_mean_norm, val_f0, noise_scheduler)
             
             # 3. Calculate Mel-Spectrogram MSE
             mel_mse = F.mse_loss(pred, gt_mel_norm)
-            mel_l1 = F.l1_loss(pred, gt_mel_norm)
-            print(f"--> Epoch {epoch} | Validation Mel MSE: {mel_mse.item():.6f} | Validation Mel L1: {mel_l1.item():.6f}")
 
             # 4. Rescale back to normal audio ranges and save
             pred_rescaled = reverse_minmax_norm_diff(pred, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
@@ -251,6 +249,9 @@ if __name__ == "__main__":
             t_max_full = torch.tensor([noise_scheduler.timesteps[0]], device=args.device)
             noise_input_full = noise_scheduler.add_noise(gt_mel_norm[0:1], noise, t_max_full)
             pred_full = trainer.target_student(noise_input_full, t_max_full, val_mean_norm, val_f0, noise_scheduler)
+
+            mel_mse_full = F.mse_loss(pred_full, gt_mel_norm)
+            print(f"--> Epoch {epoch} | Validation Mel MSE: {mel_mse.item():.6f} | Validation Mel MSE Full: {mel_mse_full.item():.6f}")
 
             pred_rescaled_full = reverse_minmax_norm_diff(pred_full, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
             audio_student_full = hifigan(pred_rescaled_full.to('cpu'))
@@ -284,4 +285,4 @@ if __name__ == "__main__":
 
             # -- Append to Eval CSV --
             with open(eval_log_path, 'a', newline='') as f:
-                csv.writer(f).writerow([epoch, mel_mse.item(), f0_mae_val, mel_l1, variance_ratio])
+                csv.writer(f).writerow([epoch, mel_mse.item(), f0_mae_val, variance_ratio, mel_mse_full])

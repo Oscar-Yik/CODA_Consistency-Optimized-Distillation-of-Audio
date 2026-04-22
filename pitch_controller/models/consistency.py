@@ -36,7 +36,6 @@ class ConsistencyPitcher(BaseModule):
 
         # Convert epsilon prediction to x_0 prediction
         x0_pred = (x - sqrt_one_minus_alpha_t * epsilon_pred) / sqrt_alpha_t
-        x0_pred = torch.clamp(x0_pred, min=-2.0, max=2.0)
 
         # Apply consistency model parameterization
         return c_skip * x + c_out * x0_pred

@@ -76,20 +76,11 @@ class ConsistencyTrainer:
         cd_loss = F.huber_loss(pred_online.float(), pred_target.float(), delta=0.5)    
         anchor_loss = F.huber_loss(pred_online.float(), teacher_x0.float().detach(), delta=0.5)
         loss = cd_loss + anchor_loss
-        # loss = cd_loss + 2.0 * anchor_loss
-
-        # L1 
-        # cd_loss = F.l1_loss(pred_online, pred_target)
-        # anchor_loss = F.l1_loss(pred_online, teacher_x0.detach())
-        # loss = cd_loss + (2.0 * anchor_loss)
-
-        # Knowledge distillation
-        # loss = F.mse_loss(pred_online, teacher_x0.detach())
 
         loss.backward()
 
         # Clip them to a maximum norm of 1.0
-        # torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.student.parameters(), max_norm=1.0)
 
         self.optimizer.step()
         self.update_target_model()

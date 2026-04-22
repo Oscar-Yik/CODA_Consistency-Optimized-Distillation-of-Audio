@@ -23,9 +23,6 @@
     "overfit_one_sample": false,
     "num_overfit_samples": 1,
     "subset_samples": false,
-    "curriculum_start_t_idx": 0,
-    "curriculum_end_t_idx": 50,
-    "curriculum_end_epoch": 15,
     "ema_mu": 0.999,
     "mixed_precision": false
 }      

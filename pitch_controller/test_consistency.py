@@ -1,13 +1,11 @@
 import os
 import yaml
 import json
-import time
-import numpy as np
 from tqdm import tqdm
 from types import SimpleNamespace
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from diffusers import DDIMScheduler
 
 from dataset import VCDecLPCDataset, VCDecLPCBatchCollate
@@ -48,7 +46,8 @@ def main():
     # 4. Set up the Scheduler
     noise_scheduler = DDIMScheduler(num_train_timesteps=ddpm_cfg['num_train_steps'])
     noise_scheduler.set_timesteps(ddpm_cfg['inference_steps'])
-    t_max = torch.as_tensor(noise_scheduler.timesteps[0]).to(device)
+    t_idx = cmd_args.t_idx
+    t_max = torch.as_tensor(noise_scheduler.timesteps[t_idx]).to(device)
     noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device)
 
     # 5. Load Training Dataset (Sanity Check)
@@ -83,8 +82,29 @@ def main():
 
 
             # --- THE MODEL TEST ---
-            noise = torch.randn_like(content_norm)
-            pred = student(noise, t_max, content_norm, f0, noise_scheduler)
+            # gt_mel_norm = minmax_norm_diff(gt_mel, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
+            # noise = torch.randn_like(content_norm)
+            # noisy_input = noise_scheduler.add_noise(gt_mel_norm, noise, t_max)
+            # pred = student(noisy_input, t_max, content_norm, f0, noise_scheduler)
+
+
+
+            chain_indices = [0, 30, 60] 
+            current_input = torch.randn_like(content_norm)
+            
+            for step_num, current_t_idx in enumerate(chain_indices):
+                t_current = torch.as_tensor([noise_scheduler.timesteps[current_t_idx]], device=device)
+                pred_x0 = student(current_input, t_current, content_norm, f0, noise_scheduler)
+                
+                if step_num < len(chain_indices) - 1:
+                    next_t_idx = chain_indices[step_num + 1]
+                    t_next = torch.as_tensor([noise_scheduler.timesteps[next_t_idx]], device=device)
+                    fresh_noise = torch.randn_like(pred_x0)
+                    current_input = noise_scheduler.add_noise(pred_x0, fresh_noise, t_next)
+                else:
+                    pred = pred_x0
+
+
 
             pred_rescaled = reverse_minmax_norm_diff(pred, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
             audio_student = hifigan(pred_rescaled)
@@ -94,6 +114,7 @@ def main():
 
     print(f"\nDone! Check the ./{cmd_args.out_dir}/ folder.")
 
+# This is almost exactly the same as the above but I don't want to spend brain power to combine them
 def test_teacher(): 
     # --- 1. CONFIG & SETUP ---
     with open("config.json", "r") as f:
@@ -186,5 +207,5 @@ def test_teacher():
     print(f"Done! Check the '{out_dir}' folder for the results.")
 
 if __name__ == "__main__":
-    # main()
-    test_teacher()
+    main()
+    # test_teacher()
