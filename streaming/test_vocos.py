@@ -13,7 +13,7 @@ from utils import get_mel, get_world_mel
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', default='examples/emma_twinkle.wav')
-    parser.add_argument('--output', default='examples/vocoder_test_vocos.wav')
+    parser.add_argument('--output', default='streaming/vocoder_test_vocos.wav')
     parser.add_argument('--mel', choices=['stft', 'world'], default='stft',
                         help="'stft' = plain librosa mel; 'world' = pyworld-resynth mel (matches stream.py)")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
