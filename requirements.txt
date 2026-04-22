@@ -16,3 +16,4 @@ tgt
 torch
 torchaudio
 tqdm
+vocos
