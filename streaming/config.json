@@ -26,8 +26,9 @@
     "f0_max_note": "C#6"
   },
   "performance": {
-    "precision": "fp16",
-    "compile": true,
-    "compile_backend": "inductor"
+    "precision": "fp32",
+    "compile": false,
+    "compile_backend": "inductor",
+    "consistency_iterations": 1
   }
 }
