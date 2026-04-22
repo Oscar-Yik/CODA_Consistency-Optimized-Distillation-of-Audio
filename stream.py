@@ -7,7 +7,7 @@ from pitch_controller.models.consistency import ConsistencyPitcher
 from pitch_controller.models.unet import UNetPitcher
 from pitch_controller.utils import minmax_norm_diff, reverse_minmax_norm_diff
 from streaming.audio_streamer import AudioStreamer
-from streaming.vocoder import load_vocoder
+from streaming.vocoder import load_vocoder, resolve_dtype
 from utils import get_matched_f0, get_world_mel, log_f0
 from diffusers import DDIMScheduler
 import numpy as np
@@ -28,6 +28,9 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config):
     max_mel = config['processing']['max_mel']
     sr = config['audio']['target_sample_rate']
     pitch_config = config['pitch']
+    dtype = resolve_dtype(config.get('performance', {}).get('precision', 'fp32'))
+    use_autocast = dtype != torch.float32
+    autocast_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     @torch.no_grad()
     def process_audio(audio_window):
@@ -63,15 +66,17 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config):
             torch.cuda.synchronize()
         model_start = time.perf_counter()
         t = torch.tensor([0], device=device)
-        model_output = model(x=source_x, t=t, mean=source_x, f0=f0_ref, noise_scheduler=noise_scheduler)
-        pred_mel = reverse_minmax_norm_diff(model_output, vmax=max_mel, vmin=min_mel)
+        with torch.autocast(device_type=autocast_device, dtype=dtype, enabled=use_autocast):
+            model_output = model(x=source_x, t=t, mean=source_x, f0=f0_ref, noise_scheduler=noise_scheduler)
+        pred_mel = reverse_minmax_norm_diff(model_output.float(), vmax=max_mel, vmin=min_mel)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         model_time = (time.perf_counter() - model_start) * 1000
 
         # Vocoder
         vocoder_start = time.perf_counter()
-        output_wav = hifigan(pred_mel)
+        with torch.autocast(device_type=autocast_device, dtype=dtype, enabled=use_autocast):
+            output_wav = hifigan(pred_mel)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         output_wav = output_wav.squeeze().cpu().numpy().astype(np.float32)
@@ -80,7 +85,11 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config):
         total_time = (time.perf_counter() - total_start) * 1000
         print(f"Total: {total_time:.1f}ms | Preprocess: {preprocess_time:.1f}ms | Model: {model_time:.1f}ms | Vocoder: {vocoder_time:.1f}ms")
 
-        return output_wav
+        return output_wav, {
+            'preprocess': preprocess_time,
+            'model': model_time,
+            'vocoder': vocoder_time,
+        }
 
     return process_audio
 
@@ -100,7 +109,7 @@ if __name__ == '__main__':
     ddpm_cfg = model_config['ddpm']
     unet_cfg = model_config['unet']
 
-    # Initialize noise scheduler (only need alphas_cumprod for single-step inference)
+    # Initialize noise scheduler
     noise_scheduler = DDIMScheduler(
         num_train_timesteps=ddpm_cfg['num_train_steps'],
         beta_schedule='squaredcos_cap_v2'
@@ -108,6 +117,12 @@ if __name__ == '__main__':
     noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device)
 
     # Load consistency model
+    perf_cfg = config.get('performance', {})
+    precision = perf_cfg.get('precision', 'fp32')
+    compile_model = perf_cfg.get('compile', False)
+    compile_backend = perf_cfg.get('compile_backend', 'inductor')
+    dtype = resolve_dtype(precision)
+
     unet = UNetPitcher(**unet_cfg)
     model = ConsistencyPitcher(unet, sigma_data=0.5).to(device)
 
@@ -117,7 +132,10 @@ if __name__ == '__main__':
     model.load_state_dict(state_dict)
     model.eval()
 
-    print(f"Model on device: {next(model.parameters()).device}")
+    if compile_model:
+        model = torch.compile(model, backend=compile_backend)
+
+    print(f"Model on device: {next(model.parameters()).device} (precision={precision} via autocast, compile={compile_model}, backend={compile_backend})")
 
     # Load vocoder
     hifigan, vocoder_type = load_vocoder(config, mel_cfg, device)
@@ -127,12 +145,14 @@ if __name__ == '__main__':
     # Warmup pass to avoid cold start
     print("Warming up models...")
     import time
-    dummy_mel = torch.randn(1, mel_cfg['n_mels'], 8).to(device)
-    dummy_f0 = torch.randn(1, 8).to(device)
+    dummy_mel = torch.randn(1, mel_cfg['n_mels'], 8, device=device)
+    dummy_f0 = torch.randn(1, 8, device=device)
     t = torch.tensor([0], device=device)
 
+    use_autocast = dtype != torch.float32
+    autocast_device = 'cuda' if use_gpu else 'cpu'
     warmup_start = time.perf_counter()
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type=autocast_device, dtype=dtype, enabled=use_autocast):
         _ = model(x=dummy_mel, t=t, mean=dummy_mel, f0=dummy_f0, noise_scheduler=noise_scheduler)
         _ = hifigan(dummy_mel)
     if use_gpu:

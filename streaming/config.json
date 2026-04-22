@@ -1,7 +1,7 @@
 {
   "audio": {
-    "chunk_size": 8192,
-    "window_size": 4096,
+    "chunk_size": 4096,
+    "window_size": 2048,
     "raw_sample_rate": 48000,
     "target_sample_rate": 24000
   },
@@ -16,12 +16,18 @@
   "models": {
     "diffusion_config": "pitch_controller/config/DiffWorld_24k.yaml",
     "consistency_checkpoint": "pitch_controller/ckpt_consistency/consistency_model_8.pt",
-    "vocoder_type": "griffin_lim",
-    "vocoder_checkpoint": "ckpts/bigvgan_24khz_100band/g_05000000.pt"
+    "vocoder_type": "vocos",
+    "vocoder_checkpoint": "ckpts/bigvgan_24khz_100band/g_05000000.pt",
+    "vocos_model": "charactr/vocos-mel-24khz"
   },
   "pitch": {
     "f0_bin": 345,
     "f0_min_note": "C2",
     "f0_max_note": "C#6"
+  },
+  "performance": {
+    "precision": "fp32",
+    "compile": false,
+    "compile_backend": "inductor"
   }
 }

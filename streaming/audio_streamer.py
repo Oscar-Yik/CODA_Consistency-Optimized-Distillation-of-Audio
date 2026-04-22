@@ -10,6 +10,13 @@ from streaming.fast_buffer import FastBuffer
 from streaming.benchmarking.latency_benchmarker import LatencyBenchmarker
 
 
+def _unpack_callback(result):
+    """Allow the audio callback to return either `wav` or `(wav, components_dict)`."""
+    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
+        return result[0], result[1]
+    return result, None
+
+
 class AudioStreamer:
     def __init__(self, audio_callback):
         self.audio_callback = audio_callback
@@ -55,7 +62,6 @@ class AudioStreamer:
         if len(audio_data.shape) > 1:
             audio_data = np.mean(audio_data, axis=1)
 
-        # resample if needed
         if sr != self.raw_sample_rate:
             audio_data = librosa.resample(audio_data, orig_sr=sr, target_sr=self.raw_sample_rate)
 
@@ -73,10 +79,10 @@ class AudioStreamer:
         downsampled_data = raw_audio_data[::self.downsample_ratio]
         context_window = self.buffer.add(downsampled_data)
 
-        output_wav = self.audio_callback(context_window)
+        output_wav, components = _unpack_callback(self.audio_callback(context_window))
 
         inference_time = (time.perf_counter() - inference_start) * 1000
-        self.benchmarker.add_latencies(hw_latency, inference_time)
+        self.benchmarker.add_latencies(hw_latency, inference_time, components)
 
         if output_wav is not None:
             output_wav = librosa.resample(output_wav, orig_sr=self.target_sample_rate, target_sr=self.raw_sample_rate)
@@ -146,7 +152,7 @@ class AudioStreamer:
 
                 # inference
                 inference_start = time.perf_counter()
-                output_wav = self.audio_callback(context_window)
+                output_wav, components = _unpack_callback(self.audio_callback(context_window))
                 inference_time = (time.perf_counter() - inference_start) * 1000
 
                 # Upsample model output back to playback rate
@@ -164,7 +170,7 @@ class AudioStreamer:
                 self.file_position = chunk_end
 
                 # Record latency (no hardware latency for file streaming)
-                self.benchmarker.add_latencies(0, inference_time)
+                self.benchmarker.add_latencies(0, inference_time, components)
 
                 # Maintain real-time timing
                 elapsed = time.perf_counter() - chunk_start
