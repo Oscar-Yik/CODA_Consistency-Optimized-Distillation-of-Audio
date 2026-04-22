@@ -14,6 +14,12 @@ from models.consistency import ConsistencyPitcher
 from modules.BigVGAN.inference import load_model
 from utils import save_audio, save_plot, minmax_norm_diff, reverse_minmax_norm_diff
 
+
+"""
+Usage:
+Move checkpoint file from 04-21-2026_full-run/consistency_model_8.pt in google drive to pitch_controller/ckpt_consistency/
+Run this command in terminal in pitch_controller/ `uv run test_consistency`
+"""
 def main():
 
     with open("test_config.json", "r") as f:
