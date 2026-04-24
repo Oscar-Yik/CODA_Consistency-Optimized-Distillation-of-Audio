@@ -134,6 +134,7 @@ class AudioStreamer:
             print(f"* Streaming from file (rate={self.raw_sample_rate}Hz, chunk={self.chunk_size})")
 
             chunk_duration = self.chunk_size / self.raw_sample_rate
+            streamed_chunks = []
 
             while self.file_position < len(self.file_audio_data):
                 chunk_start = time.perf_counter()
@@ -164,7 +165,9 @@ class AudioStreamer:
                     output_wav = raw_chunk
 
                 # Play output
-                stream.write(output_wav.astype(np.float32).tobytes())
+                output_wav = output_wav.astype(np.float32)
+                stream.write(output_wav.tobytes())
+                streamed_chunks.append(output_wav.copy())
 
                 # Update position
                 self.file_position = chunk_end
@@ -184,6 +187,13 @@ class AudioStreamer:
             stream.stop_stream()
             stream.close()
             p.terminate()
+
+            if streamed_chunks:
+                output_audio = np.concatenate(streamed_chunks)
+                output_path = f"streaming/streamed_output_{int(time.time())}.wav"
+                sf.write(output_path, output_audio, self.raw_sample_rate)
+                print(f"* Wrote streamed audio to {output_path}")
+
             self.benchmarker.show_graph()
 
     def run(self):

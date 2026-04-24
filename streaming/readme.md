@@ -42,6 +42,16 @@ In actual autotune, what you would do is have a larger `window_size` temporal du
 - `compile_backend`: the backend used for compilation. I'm pretty sure "inductor" is correct for like your GPU, but if something breaks then it might be because of this 
 - `consistency_iterations`: the number of iterations we run the consistency model
 
+### Pitch
+```json
+"pitch": {
+    "f0_bin": 345,
+    "f0_min_note": "C2",
+    "f0_max_note": "C#6",
+    "key": "bb major"
+},
+```
+The key can be configured to pitch snap only to notes within the key. Leave it as an empty string to pitch snap to the closest note instead. The string follows the pattern of `"<note><#/b/nothing> <major/minor>"`
 
 ## Running only the Vocoder
 Since we are using a smaller vocoder, the output may contain artifacts. If running `stream.py` pproduces bad quality audio and you want to see if it is the vocoder's issue, then you can set the input file path on line 15 of `streaming/test_vocos` and then run `uv run python -m streaming.test_vocos` from the project root. This will output a `'streaming/vocoder_test_vocos.wav` file which contains the result of directly running the vocoder on the input (and skipping the model inference). 
