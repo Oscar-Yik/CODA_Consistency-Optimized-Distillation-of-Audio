@@ -54,7 +54,8 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config, chai
         # Preprocessing
         preprocess_start = time.perf_counter()
         source_mel = get_world_mel(wav_path=None, sr=sr, wav=audio_window)
-        f0_ref = get_matched_f0(x_wav=audio_window, y_wav=audio_window, method='world')
+        key = pitch_config["key"] if pitch_config["key"] == "" else None
+        f0_ref = get_matched_f0(x_wav=audio_window, y_wav=audio_window, method='pyin', key=key)
         f0_ref = log_f0(f0_ref, {
             'f0_bin': pitch_config['f0_bin'],
             'f0_min': librosa.note_to_hz(pitch_config['f0_min_note']),

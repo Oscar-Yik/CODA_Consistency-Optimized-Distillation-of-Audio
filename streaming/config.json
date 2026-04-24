@@ -1,7 +1,7 @@
 {
   "audio": {
-    "chunk_size": 10000,
-    "window_size": 20000,
+    "chunk_size": 4096,
+    "window_size": 2048,
     "raw_sample_rate": 48000,
     "target_sample_rate": 24000
   },
@@ -23,7 +23,8 @@
   "pitch": {
     "f0_bin": 345,
     "f0_min_note": "C2",
-    "f0_max_note": "C#6"
+    "f0_max_note": "C#6",
+    "key": "bb major"
   },
   "performance": {
     "precision": "fp32",
