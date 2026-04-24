@@ -19,14 +19,15 @@ def load_config(config_path='streaming/config.json'):
         return json.load(f)
 
 
-def create_audio_processor(model, hifigan, noise_scheduler, device, config, multistep_timesteps=None):
+def create_audio_processor(model, hifigan, noise_scheduler, device, config, chain_timesteps):
     """
     Factory function that creates an audio processing callback.
     This closure captures the model and configuration.
 
-    multistep_timesteps: optional 1-D tensor of timesteps (high -> low) to run
-        after the initial t=0 consistency pass. Total consistency iterations =
-        1 + len(multistep_timesteps).
+    chain_timesteps: 1-D tensor of real scheduler timesteps (high -> low), one
+        per consistency iteration. Sampling starts from pure noise, predicts
+        x0 at chain_timesteps[0], then re-noises to chain_timesteps[1] and
+        repeats. Mirrors the chain used in test_consistency.py.
     """
     min_mel = config['processing']['min_mel']
     max_mel = config['processing']['max_mel']
@@ -35,7 +36,6 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config, mult
     dtype = resolve_dtype(config.get('performance', {}).get('precision', 'fp32'))
     use_autocast = dtype != torch.float32
     autocast_device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    extra_timesteps = multistep_timesteps if multistep_timesteps is not None else []
 
     @torch.no_grad()
     def process_audio(audio_window):
@@ -66,26 +66,24 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config, mult
         f0_ref = torch.from_numpy(f0_ref).float().unsqueeze(0).to(device)
         source_x = minmax_norm_diff(source_mel, vmax=max_mel, vmin=min_mel)
 
-        # Model inference
+        # Model inference: start from pure noise, chain through real timesteps
+        # (mirrors test_consistency.py's sampling loop).
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         model_start = time.perf_counter()
-        t = torch.tensor([0], device=device)
+
         with torch.autocast(device_type=autocast_device, dtype=dtype, enabled=use_autocast):
-            model_output = model(x=source_x, t=t, mean=source_x, f0=f0_ref, noise_scheduler=noise_scheduler)
+            current_input = torch.randn_like(source_x)
+            num_steps = len(chain_timesteps)
+            for step_num in range(num_steps):
+                t_current = chain_timesteps[step_num].view(1)
+                pred_x0 = model(x=current_input, t=t_current, mean=source_x, f0=f0_ref, noise_scheduler=noise_scheduler)
+                if step_num < num_steps - 1:
+                    t_next = chain_timesteps[step_num + 1].view(1)
+                    fresh_noise = torch.randn_like(pred_x0)
+                    current_input = noise_scheduler.add_noise(pred_x0, fresh_noise, t_next)
 
-            # Multi-step consistency sampling: re-noise the x0 prediction to a
-            # smaller sigma and re-predict. 
-            for t_next in extra_timesteps:
-                t_batch = torch.tensor([int(t_next)], device=device)
-                alpha_t = noise_scheduler.alphas_cumprod[t_batch]
-                sqrt_alpha = alpha_t.sqrt().view(1, 1, 1)
-                sqrt_one_minus = (1 - alpha_t).sqrt().view(1, 1, 1)
-                noise = torch.randn_like(model_output)
-                x_noisy = sqrt_alpha * model_output + sqrt_one_minus * noise
-                model_output = model(x=x_noisy, t=t_batch, mean=source_x, f0=f0_ref, noise_scheduler=noise_scheduler)
-
-        pred_mel = reverse_minmax_norm_diff(model_output.float(), vmax=max_mel, vmin=min_mel)
+        pred_mel = reverse_minmax_norm_diff(pred_x0.float(), vmax=max_mel, vmin=min_mel)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         model_time = (time.perf_counter() - model_start) * 1000
@@ -126,11 +124,11 @@ if __name__ == '__main__':
     ddpm_cfg = model_config['ddpm']
     unet_cfg = model_config['unet']
 
-    # Initialize noise scheduler
-    noise_scheduler = DDIMScheduler(
-        num_train_timesteps=ddpm_cfg['num_train_steps'],
-        beta_schedule='squaredcos_cap_v2'
-    )
+    # Initialize noise scheduler. Match test_consistency.py: use inference_steps
+    # from the diffusion config so chain indices [0, 30, 60] map to the same
+    # real timesteps the student was evaluated on.
+    noise_scheduler = DDIMScheduler(num_train_timesteps=ddpm_cfg['num_train_steps'])
+    noise_scheduler.set_timesteps(ddpm_cfg['inference_steps'])
     noise_scheduler.alphas_cumprod = noise_scheduler.alphas_cumprod.to(device)
 
     # Load consistency model
@@ -138,21 +136,33 @@ if __name__ == '__main__':
     precision = perf_cfg.get('precision', 'fp32')
     compile_model = perf_cfg.get('compile', False)
     compile_backend = perf_cfg.get('compile_backend', 'inductor')
-    consistency_iterations = int(perf_cfg.get('consistency_iterations', 1))
-    if consistency_iterations < 1:
-        raise ValueError(f"performance.consistency_iterations must be >= 1 (got {consistency_iterations})")
     dtype = resolve_dtype(precision)
 
-    # Build the schedule of extra consistency steps (after the initial t=0 pass).
-    # Spread them across the diffusion range using the scheduler's own timestep spacing.
-    if consistency_iterations > 1:
-        noise_scheduler.set_timesteps(consistency_iterations)
-        # scheduler.timesteps is ordered high -> low; drop the largest one so the
-        # noise levels we re-inject are strictly below the training range's top.
-        multistep_timesteps = noise_scheduler.timesteps[1:].to(device)
+    # Build the sampling chain: real scheduler timesteps ordered high -> low.
+    # `performance.chain_indices` in config, when present, is used directly.
+    # Otherwise fall back to [0, 30, 60] (matching test_consistency.py) when
+    # the schedule is long enough, else evenly spaced across the schedule for
+    # `performance.consistency_iterations` (default 3) steps.
+    total_steps = len(noise_scheduler.timesteps)
+    configured_indices = perf_cfg.get('chain_indices')
+    if configured_indices is not None:
+        chain_indices = [int(i) for i in configured_indices]
+        if not chain_indices:
+            raise ValueError("performance.chain_indices must be non-empty")
+        if any(i < 0 or i >= total_steps for i in chain_indices):
+            raise ValueError(f"performance.chain_indices must all be in [0, {total_steps}) (got {chain_indices})")
     else:
-        multistep_timesteps = torch.empty(0, dtype=torch.long, device=device)
-    print(f"Consistency iterations per chunk: {consistency_iterations}")
+        consistency_iterations = int(perf_cfg.get('consistency_iterations', 3))
+        if consistency_iterations < 1:
+            raise ValueError(f"performance.consistency_iterations must be >= 1 (got {consistency_iterations})")
+        else:
+            chain_indices = [int(round(i * (total_steps - 1) / max(consistency_iterations - 1, 1)))
+                             for i in range(consistency_iterations)]
+    chain_timesteps = torch.as_tensor(
+        [noise_scheduler.timesteps[i].item() for i in chain_indices],
+        dtype=torch.long, device=device,
+    )
+    print(f"Consistency chain indices: {chain_indices} (timesteps={chain_timesteps.tolist()})")
 
     unet = UNetPitcher(**unet_cfg)
     model = ConsistencyPitcher(unet, sigma_data=0.5).to(device)
@@ -178,21 +188,19 @@ if __name__ == '__main__':
     import time
     dummy_mel = torch.randn(1, mel_cfg['n_mels'], 8, device=device)
     dummy_f0 = torch.randn(1, 8, device=device)
-    t = torch.tensor([0], device=device)
 
     use_autocast = dtype != torch.float32
     autocast_device = 'cuda' if use_gpu else 'cpu'
     warmup_start = time.perf_counter()
     with torch.no_grad(), torch.autocast(device_type=autocast_device, dtype=dtype, enabled=use_autocast):
-        warm_out = model(x=dummy_mel, t=t, mean=dummy_mel, f0=dummy_f0, noise_scheduler=noise_scheduler)
-        for t_next in multistep_timesteps:
-            t_batch = torch.tensor([int(t_next)], device=device)
-            alpha_t = noise_scheduler.alphas_cumprod[t_batch]
-            sqrt_alpha = alpha_t.sqrt().view(1, 1, 1)
-            sqrt_one_minus = (1 - alpha_t).sqrt().view(1, 1, 1)
-            noise = torch.randn_like(warm_out)
-            x_noisy = sqrt_alpha * warm_out + sqrt_one_minus * noise
-            warm_out = model(x=x_noisy, t=t_batch, mean=dummy_mel, f0=dummy_f0, noise_scheduler=noise_scheduler)
+        current_input = torch.randn_like(dummy_mel)
+        for step_num in range(len(chain_timesteps)):
+            t_current = chain_timesteps[step_num].view(1)
+            warm_out = model(x=current_input, t=t_current, mean=dummy_mel, f0=dummy_f0, noise_scheduler=noise_scheduler)
+            if step_num < len(chain_timesteps) - 1:
+                t_next = chain_timesteps[step_num + 1].view(1)
+                fresh_noise = torch.randn_like(warm_out)
+                current_input = noise_scheduler.add_noise(warm_out, fresh_noise, t_next)
         _ = hifigan(dummy_mel)
     if use_gpu:
         torch.cuda.synchronize()
@@ -202,7 +210,7 @@ if __name__ == '__main__':
     # Streamer
     audio_processor = create_audio_processor(
         model, hifigan, noise_scheduler, device, config,
-        multistep_timesteps=multistep_timesteps,
+        chain_timesteps=chain_timesteps,
     )
     streamer = AudioStreamer(audio_callback=audio_processor)
     streamer.run()
