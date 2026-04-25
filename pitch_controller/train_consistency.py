@@ -7,7 +7,6 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
-from torch.cuda.amp import autocast, GradScaler
 
 from diffusers import DDIMScheduler
 
@@ -29,7 +28,7 @@ with open(args.config) as f:
 mel_cfg = config['logmel']
 ddpm_cfg = config['ddpm']
 unet_cfg = config['unet']
-f0_type = unet_cfg.get('pitch_type', 'bins')
+f0_type = "log"
 
 def graph_val_mel_spectrograms(gt_mel_norm, pred, epoch, fig_path):
     _, axes = plt.subplots(1, 3, figsize=(18, 4))

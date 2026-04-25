@@ -1,7 +1,10 @@
 import os
 import yaml
 import json
+import shutil
 from tqdm import tqdm
+import numpy as np
+import librosa 
 from types import SimpleNamespace
 
 import torch
@@ -31,7 +34,7 @@ def main():
     mel_cfg = config['logmel']
     ddpm_cfg = config['ddpm']
     unet_cfg = config['unet']
-    f0_type = unet_cfg.get('pitch_type', 'bins')
+    f0_type = "log"
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     os.makedirs(cmd_args.out_dir, exist_ok=True)
@@ -58,11 +61,13 @@ def main():
 
     # 5. Load Training Dataset (Sanity Check)
     print('Loading Training Data for Sanity Check...')
-    train_set = VCDecLPCDataset(cmd_args.data_dir, subset='train', content_dir=cmd_args.lpc_dir, f0_type=f0_type)
+    train_set = VCDecLPCDataset(cmd_args.data_dir, subset='test', content_dir=cmd_args.lpc_dir, f0_type=f0_type)
     collate_fn = VCDecLPCBatchCollate(cmd_args.train_frames)
     
     # shuffle=False ensures we grab the same files every time for consistent debugging
     train_loader = DataLoader(train_set, batch_size=1, shuffle=False, collate_fn=collate_fn)
+
+    shutil.copy("test_config.json", f"{cmd_args.out_dir}/test_config.json")
 
     print(f'Starting generation for {cmd_args.num_samples} samples...')
     
@@ -95,7 +100,7 @@ def main():
 
 
 
-            chain_indices = [0, 30, 60] 
+            chain_indices = list(range(0, 100, cmd_args.chain_steps))
             current_input = torch.randn_like(content_norm)
             
             for step_num, current_t_idx in enumerate(chain_indices):
@@ -132,7 +137,7 @@ def test_teacher():
     mel_cfg = config['logmel']
     ddpm_cfg = config['ddpm']
     unet_cfg = config['unet']
-    f0_type = unet_cfg.get('pitch_type', 'bins')
+    f0_type = "log"
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")

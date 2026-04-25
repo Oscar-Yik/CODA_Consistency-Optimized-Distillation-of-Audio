@@ -57,7 +57,7 @@ def plot_eval_metrics(csv_path, save_path):
     ax3.grid(True, linestyle='--', alpha=0.7)
     ax3.legend()
 
-    ax4.plot(epochs, mel_mses, marker='o', color='tab:blue', linewidth=2, label='Mel MSE t_idx = 0')
+    ax4.plot(epochs, mel_mses_full, marker='o', color='tab:blue', linewidth=2, label='Mel MSE t_idx = 0')
     ax4.set_title('Validation Mel-Spectrogram t_idx = 0 Error (Timbre/Texture)')
     ax4.set_ylabel('MSE')
     ax4.grid(True, linestyle='--', alpha=0.7)
