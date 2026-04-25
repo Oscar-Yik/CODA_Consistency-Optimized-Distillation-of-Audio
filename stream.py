@@ -8,7 +8,7 @@ from pitch_controller.models.unet import UNetPitcher
 from pitch_controller.utils import minmax_norm_diff, reverse_minmax_norm_diff
 from streaming.audio_streamer import AudioStreamer
 from streaming.vocoder import load_vocoder, resolve_dtype
-from utils import get_matched_f0, get_world_mel, log_f0
+from utils import get_matched_f0, get_mel, get_world_mel, log_f0
 from diffusers import DDIMScheduler
 import numpy as np
 
@@ -53,13 +53,15 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config, chai
 
         # Preprocessing
         preprocess_start = time.perf_counter()
-        source_mel = get_world_mel(wav_path=None, sr=sr, wav=audio_window)
-        key = pitch_config["key"] if pitch_config["key"] == "" else None
-        f0_ref = get_matched_f0(x_wav=audio_window, y_wav=audio_window, method='pyin', key=key)
+        # source_mel = get_world_mel(wav_path=None, sr=sr, wav=audio_window) # TODO: which get_*_mel to use?
+        source_mel = get_mel(wav_path=None, wav=audio_window)
+        key = pitch_config["key"] if pitch_config["key"] != "" else None
+        perf_cfg = config.get('performance', {})
+        f0_ref = get_matched_f0(x_wav=audio_window, y_wav=audio_window, method='pyin', key=key, f0_min_note=pitch_config["f0_min_note"], f0_max_note=pitch_config["f0_max_note"], fast_f0=perf_cfg["fast_f0"])
         f0_ref = log_f0(f0_ref, {
             'f0_bin': pitch_config['f0_bin'],
-            'f0_min': librosa.note_to_hz(pitch_config['f0_min_note']),
-            'f0_max': librosa.note_to_hz(pitch_config['f0_max_note'])
+            'f0_min': librosa.note_to_hz("C2"),
+            'f0_max': librosa.note_to_hz("C#6")
         })
         preprocess_time = (time.perf_counter() - preprocess_start) * 1000
 

@@ -34,13 +34,17 @@ In actual autotune, what you would do is have a larger `window_size` temporal du
     "precision": "fp32",
     "compile": false,
     "compile_backend": "inductor",
-    "consistency_iterations": 1
+    "consistency_iterations": 3,
+    "chain_indices": [0, 30, 60],
+    "fast_f0": true
 }
 ```
 - `precision`: one of `["fp32", "fp16", "bf16"]`
 - `compile`: `true` or `false`. Determinines if we run `torch.compile` on the model and vocoder
 - `compile_backend`: the backend used for compilation. I'm pretty sure "inductor" is correct for like your GPU, but if something breaks then it might be because of this 
 - `consistency_iterations`: the number of iterations we run the consistency model
+- `chain_indices`: same as the chain indices in test_consistency.py. The length must match `consistency_iterations`. Leave this blank for the script to use evenly-spaced indices.
+- `fast_f0`: This decides if we use `pyin` or `yin` to get the f0. `pyin` uses HMM (probabilistic) so it is slow, but performs better. If you want to use it, it would be good to configure the min and max f0s as explained in the next section. `yin` is a lot faster as it is deterministic, but the quality is slightly worse. Overall, our audio quality is already bad due to the choppiness of the audio from processing tiny chunks at a time. So I don't think using the better one makes thaaaat big of a difference, so here the default is to use `yin` instead.
 
 ### Pitch
 ```json
@@ -51,7 +55,7 @@ In actual autotune, what you would do is have a larger `window_size` temporal du
     "key": "bb major"
 },
 ```
-The key can be configured to pitch snap only to notes within the key. Leave it as an empty string to pitch snap to the closest note instead. The string follows the pattern of `"<note><#/b/nothing> <major/minor>"`
+The key can be configured to pitch snap only to notes within the key. Leave it as an empty string to pitch snap to the closest note instead. The string follows the pattern of `"<note><#/b/nothing> <major/minor>"`. min and max f0 range can be narrowed to make the preprocessing faster. But since it is already lighting fast, it doesn't matter that much. Leaving it as it is will be fine for performance.
 
 ## Running only the Vocoder
 Since we are using a smaller vocoder, the output may contain artifacts. If running `stream.py` pproduces bad quality audio and you want to see if it is the vocoder's issue, then you can set the input file path on line 15 of `streaming/test_vocos` and then run `uv run python -m streaming.test_vocos` from the project root. This will output a `'streaming/vocoder_test_vocos.wav` file which contains the result of directly running the vocoder on the input (and skipping the model inference). 

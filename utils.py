@@ -33,8 +33,9 @@ def _get_best_mcep_params(fs):
         raise ValueError(f"Not found the setting for {fs}.")
 
 
-def get_mel(wav_path):
-    wav, _ = load(wav_path, sr=24000)
+def get_mel(wav_path, wav=None):
+    if wav.all() == None:
+        wav, _ = load(wav_path, sr=24000)
     wav = wav[:(wav.shape[0] // 256)*256]
     wav = np.pad(wav, 384, mode='reflect')
     stft = librosa.core.stft(wav, n_fft=1024, hop_length=256, win_length=1024, window='hann', center=False)
@@ -82,7 +83,7 @@ def get_world_mel(wav_path=None, sr=24000, wav=None):
     return log_mel_spectrogram
 
 
-def get_f0(wav_path, wav, method='pyin', padding=True):
+def get_f0(wav_path, wav, method='pyin', padding=True, f0_min_note=None, f0_max_note=None, fast_f0=False):
     sr = 24000
 
     if wav is None:
@@ -91,18 +92,29 @@ def get_f0(wav_path, wav, method='pyin', padding=True):
         else:
             raise ValueError("Must provide either 'wav' (array) or 'wav_path' (string)")
         
+    f0_min_note = f0_min_note if f0_min_note != None else "C2"
+    f0_max_note = f0_max_note if f0_max_note != None else "C#6"
+        
     if method == 'pyin':
         wav = wav[:(wav.shape[0] // 256) * 256]
         wav = np.pad(wav, 384, mode='reflect')
-        f0, _, _ = librosa.pyin(wav, frame_length=1024, hop_length=256, center=False, sr=24000,
-                                fmin=librosa.note_to_hz('C2'),
-                                fmax=librosa.note_to_hz('C6'), fill_na=0)
+        if fast_f0:
+            f0 = librosa.yin(wav, frame_length=1024, hop_length=256, center=False, sr=24000,
+                                    fmin=librosa.note_to_hz(f0_min_note),
+                                    fmax=librosa.note_to_hz(f0_max_note))
+            energy = np.array([np.sqrt(np.mean(wav[i*256:i*256+1024]**2)) for i in range(len(f0))])                                                                                                                                                                                           
+            f0[energy < 1e-3] = 0 
+        else: 
+             f0, _, _ = librosa.pyin(wav, frame_length=1024, hop_length=256, center=False, sr=24000,
+                                fmin=librosa.note_to_hz(f0_min_note),
+                                fmax=librosa.note_to_hz(f0_max_note), fill_na=0)
+            
     elif method == 'world':
         wav = (wav * 32767).astype(np.int16)
         wav = (wav / 32767).astype(np.float64)
         _f0, t = pw.dio(wav, fs=sr, frame_period=256/sr*1000,
-                        f0_floor=librosa.note_to_hz('C2'),
-                        f0_ceil=librosa.note_to_hz('C6'))
+                        f0_floor=librosa.note_to_hz(f0_min_note),
+                        f0_ceil=librosa.note_to_hz(f0_max_note))
         f0 = pw.stonemask(wav, _f0, t, sr)
         f0 = f0[:-1]
 
@@ -136,10 +148,10 @@ def get_mcep(x_path, x_wav, n_fft=1024, n_shift=256, sr=24000):
     return mcep
 
 
-def get_matched_f0(x=None, y=None, x_wav=None, y_wav=None, method='world', n_fft=1024, n_shift=256, key=None):
+def get_matched_f0(x=None, y=None, x_wav=None, y_wav=None, method='world', n_fft=1024, n_shift=256, key=None, f0_min_note=None, f0_max_note=None, fast_f0=False):
     # f0_x = get_f0(x, method='pyin', padding=False)
     # f0_y = get_f0(y, method=method, padding=False)
-    f0_y = get_autotuned_f0(y, y_wav, method, False, key=key)
+    f0_y = get_autotuned_f0(y, y_wav, method, False, key=key, f0_min_note=f0_min_note, f0_max_note=f0_max_note, fast_f0=fast_f0)
     # print(f0_y.max())
     # print(f0_y.min())
 
@@ -266,8 +278,8 @@ def _get_key_notes(key=None):
     return set((root + interval) % 12 for interval in scale)
 
 
-def get_autotuned_f0(wav_path, wav, method, padding, key=None):
-    f0_raw = get_f0(wav_path, wav, method=method, padding=padding)
+def get_autotuned_f0(wav_path, wav, method, padding, key=None, f0_min_note=None, f0_max_note=None, fast_f0=False):
+    f0_raw = get_f0(wav_path, wav, method=method, padding=padding, f0_min_note=f0_min_note, f0_max_note=f0_max_note, fast_f0=fast_f0)
 
     voiced_mask = f0_raw > 0
     autotuned_f0 = np.copy(f0_raw)
