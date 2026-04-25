@@ -1,0 +1,37 @@
+{
+  "audio": {
+    "chunk_size": 4096,
+    "window_size": 2048,
+    "raw_sample_rate": 48000,
+    "target_sample_rate": 24000
+  },
+  "source": {
+    "type": "file",
+    "file_path": "examples/emma_twinkle.wav"
+  },
+  "processing": {
+    "min_mel": -11.512925464970229,
+    "max_mel": 2.5
+  },
+  "models": {
+    "diffusion_config": "pitch_controller/config/DiffWorld_24k.yaml",
+    "consistency_checkpoint": "pitch_controller/ckpt_consistency/consistency_model_4.pt",
+    "vocoder_type": "vocos",
+    "vocoder_checkpoint": "ckpts/bigvgan_24khz_100band/g_05000000.pt",
+    "vocos_model": "charactr/vocos-mel-24khz"
+  },
+  "pitch": {
+    "f0_bin": 345,
+    "f0_min_note": "C2",
+    "f0_max_note": "C#6",
+    "key": "bb major"
+  },
+  "performance": {
+    "precision": "fp32",
+    "compile": false,
+    "compile_backend": "inductor",
+    "consistency_iterations": 3,
+    "chain_indices": [0, 30, 60],
+    "fast_f0": true
+  }
+}
