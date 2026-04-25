@@ -1,0 +1,288 @@
+import os
+import yaml
+import json
+import shutil
+from tqdm import tqdm
+import numpy as np
+import librosa 
+from types import SimpleNamespace
+from pathlib import Path
+
+import torch
+from torch.utils.data import DataLoader
+from diffusers import DDIMScheduler
+
+from dataset import VCDecLPCDataset, VCDecLPCBatchCollate
+from models.unet import UNetPitcher
+from models.consistency import ConsistencyPitcher
+from modules.BigVGAN.inference import load_model
+from utils import save_audio, save_plot, minmax_norm_diff, reverse_minmax_norm_diff, get_f0
+
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+
+GRAPH_DIR = Path("graphs")
+
+def load(args, config, device):
+    mel_cfg = config['logmel']
+    ddpm_cfg = config['ddpm']
+    unet_cfg = config['unet']
+
+    train_set = VCDecLPCDataset(args.data_dir, subset='test', content_dir=args.lpc_dir, f0_type="log")
+    collate_fn = VCDecLPCBatchCollate(args.train_frames)
+    loader = DataLoader(train_set, batch_size=1, shuffle=False, collate_fn=collate_fn)
+    batch = next(iter(loader))
+
+    gt_mel = batch['mel1'].to(device)
+    content = batch['content1'].to(device)
+    f0 = batch['f0_1'].to(device).long()
+    content_norm = minmax_norm_diff(content, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
+
+    noise_scheduler = DDIMScheduler(num_train_timesteps=ddpm_cfg['num_train_steps'])
+    noise_scheduler.set_timesteps(ddpm_cfg['inference_steps'])
+    generator = torch.Generator(device=device).manual_seed(2024)
+
+    # --- 2. LOAD MODELS ---
+    print("Loading Teacher...")
+    teacher = UNetPitcher(**unet_cfg).to(device)
+    t_state = torch.load('../ckpts/world_fixed_40.pt', map_location=device, weights_only=True)
+    for k in list(t_state.keys()): t_state[k.replace('_orig_mod.', '')] = t_state.pop(k)
+    teacher.load_state_dict(t_state)
+    teacher.eval()
+
+    print("Loading Student...")
+    student_unet = UNetPitcher(**unet_cfg).to(device)
+    student = ConsistencyPitcher(student_unet).to(device)
+    s_state = torch.load(args.ckpt, map_location=device, weights_only=True)
+    student.load_state_dict(s_state)
+    student.eval()
+
+    return student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg
+
+def teacher_mel(teacher, generator, noise_scheduler, f0, content_norm, mel_cfg, device, target_step_idx):
+    teacher_pred = teacher_inference(teacher, generator, noise_scheduler, f0, content_norm, mel_cfg, device, eta=1, target_step_idx=target_step_idx)
+    teacher_mel_show = teacher_pred.squeeze().cpu().numpy()
+    return teacher_mel_show
+
+def teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device):
+    teacher_pred = teacher_inference(teacher, generator, noise_scheduler, f0, content_norm, mel_cfg, device)
+    teacher_100_mse = F.mse_loss(teacher_pred, gt_mel).item()
+    print(f"Teacher Baseline (100 steps) MSE: {teacher_100_mse:.4f}")
+    return teacher_100_mse
+
+def teacher_inference(teacher, generator, noise_scheduler, f0, content_norm, mel_cfg, device, eta=1, target_step_idx=None):
+    print("Running Teacher 100-Step Baseline...")
+    x_t_teacher = torch.randn_like(content_norm, generator=generator).to(device)
+    with torch.no_grad():
+        for i, t in enumerate(tqdm(noise_scheduler.timesteps, desc="Teacher")):
+            t_batch = torch.tensor([t.item()] * x_t_teacher.shape[0], device=device)
+            model_output = teacher(x=x_t_teacher, mean=content_norm, f0=f0, t=t_batch)
+
+            step_output = noise_scheduler.step(model_output, t.item(), x_t_teacher, eta=eta, generator=generator)
+            x_t_teacher = step_output.prev_sample
+
+            if target_step_idx is not None and i == target_step_idx:
+                # pred_original_sample is the UNet's CURRENT guess for the final clean audio
+                current_guess = step_output.pred_original_sample
+                return reverse_minmax_norm_diff(current_guess, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
+            
+    teacher_pred = reverse_minmax_norm_diff(x_t_teacher, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
+    return teacher_pred
+
+def student_mel(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device):
+    milestones = [[0, 25, 50, 75]]
+    student_preds = student_inference(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device, milestones)
+    student_mel_show = student_preds[0].squeeze().cpu().numpy()
+    return student_mel_show
+
+def student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device):
+    milestones = [[0], [0, 50], [0, 25, 50, 75]]
+    student_preds = student_inference(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device, milestones)
+    student_mses = [F.mse_loss(student_pred, gt_mel).item() for student_pred in student_preds]
+    return student_mses
+
+def student_inference(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device, milestones):
+    print("Evaluating Student at key milestones...")
+    student_preds = []
+
+    with torch.no_grad():
+        for chain in milestones:
+            # Reset random noise for fairness
+            current_input = torch.randn_like(content_norm, generator=generator).to(device)
+            
+            for step_num, current_t_idx in enumerate(chain):
+                t_current = torch.as_tensor([noise_scheduler.timesteps[current_t_idx]], device=device)
+                pred_x0 = student(current_input, t_current, content_norm, f0, noise_scheduler)
+                
+                if step_num < len(chain) - 1:
+                    next_t_idx = chain[step_num + 1]
+                    t_next = torch.as_tensor([noise_scheduler.timesteps[next_t_idx]], device=device)
+                    fresh_noise = torch.randn_like(pred_x0, generator=generator)
+                    current_input = noise_scheduler.add_noise(pred_x0, fresh_noise, t_next)
+                else:
+                    final_pred = pred_x0
+                    
+            s_pred_rescaled = reverse_minmax_norm_diff(final_pred, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
+            student_preds.append(s_pred_rescaled)
+
+    return student_preds
+
+def generate_bar_graph(student_mses, teacher_100_mse):
+    print("Generating Graph...")
+    plt.figure(figsize=(9, 6))
+    labels = ['1 Step', '2 Steps', '4 Steps']
+    
+    # Create X-axis positions
+    x_positions = np.arange(len(labels) + 1)
+    all_labels = labels + ['Teacher\n(100 Steps)']
+    all_errors = student_mses + [teacher_100_mse]
+    
+    # Plot the bars (Green for Student, Red for Teacher)
+    bars = plt.bar(x_positions, all_errors, color=['#2ca02c']*3 + ['#d62728'], edgecolor='black', linewidth=1.2)
+    
+    # Add the exact MSE values on top of each bar for absolute clarity
+    # We add a tiny vertical offset based on the max error so the text doesn't touch the bar
+    y_offset = max(all_errors) * 0.02
+    for bar in bars:
+        yval = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2, yval + y_offset, f'{yval:.4f}', ha='center', va='bottom', fontweight='bold')
+
+    plt.title('Inference Efficiency: Consistency Student vs Teacher Baseline', fontweight='bold', pad=20)
+    plt.ylabel('Mean Squared Error (MSE)')
+    plt.xticks(x_positions, all_labels)
+    
+    # Draw a horizontal line showing the Teacher's target performance across the chart
+    plt.axhline(y=teacher_100_mse, color='black', linestyle='--', alpha=0.5, label='Teacher Target Quality (100 Steps)')
+    
+    # Clean up the borders
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    
+    # Move the legend outside the chart if needed, or keep it standard
+    plt.legend(loc='upper right')
+    
+    plt.tight_layout()
+    plt.savefig(GRAPH_DIR / 'bar_chart_efficiency_mse.png', dpi=300)
+    print("Saved clean bar chart to 'bar_chart_efficiency_mse.png'!")
+
+def generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show):
+    print("Generating Side-by-Side Spectrograms...")
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    
+    # Global color limits so all graphs share the exact same heat scale
+    vmin = min(gt_mel_show.min(), student_mel_show.min(), teacher_mel_show.min())
+    vmax = max(gt_mel_show.max(), student_mel_show.max(), teacher_mel_show.max())
+    
+    # 5a. Ground Truth
+    im0 = axes[0].imshow(gt_mel_show, aspect="auto", origin="lower", interpolation='none', vmin=vmin, vmax=vmax)
+    axes[0].set_title('Ground Truth (Original Audio)', fontsize=14, fontweight='bold')
+    axes[0].set_xlabel('Time Frames')
+    axes[0].set_ylabel('Mel Frequency Bins')
+    fig.colorbar(im0, ax=axes[0])
+
+    # 5b. Teacher UNet (4 Steps)
+    im1 = axes[1].imshow(teacher_mel_show, aspect="auto", origin="lower", interpolation='none', vmin=vmin, vmax=vmax)
+    axes[1].set_title('Original UNet (4 Steps DDIM)', fontsize=14, fontweight='bold', color='#d62728')
+    axes[1].set_xlabel('Time Frames')
+    fig.colorbar(im1, ax=axes[1])
+
+    # 5c. Consistency Student (4 Steps)
+    im2 = axes[2].imshow(student_mel_show, aspect="auto", origin="lower", interpolation='none', vmin=vmin, vmax=vmax)
+    axes[2].set_title('Consistency Model (4 Chain Steps)', fontsize=14, fontweight='bold', color='#2ca02c')
+    axes[2].set_xlabel('Time Frames')
+    fig.colorbar(im2, ax=axes[2])
+
+    plt.tight_layout()
+    plt.savefig(GRAPH_DIR / 'spectrogram_comparison_4steps.png', dpi=300)
+    print("Saved comparison to 'spectrogram_comparison_4steps.png'!")
+
+def plot_side_by_side_mel_spectrogram(args, config, device):
+
+    student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg = load(args, config, device)
+
+    gt_mel_show = gt_mel.squeeze().cpu().numpy()
+    student_mel_show = student_mel(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device)
+    target_step_idx = 3
+    teacher_mel_show = teacher_mel(teacher, generator, noise_scheduler, f0, content_norm, mel_cfg, device, target_step_idx)
+
+    generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show)
+
+def plot_efficiency_barchart(args, config, device):
+
+    student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg = load(args, config, device)
+
+    teacher_100_mse = teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
+    student_mses = student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
+    generate_bar_graph(student_mses, teacher_100_mse)
+
+def generate_and_save_audio(args, config, device):
+
+    student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg = load(args, config, device)
+    hifigan, _ = load_model(args.vocoder_dir, device=device) 
+    milestones = [[0, 25, 50, 75]]
+
+    teacher_pred = teacher_inference(teacher, generator, noise_scheduler, f0, content_norm, mel_cfg, device)
+    student_preds = student_inference(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device, milestones)
+
+    audio_student = hifigan(student_preds[0])
+    save_audio(GRAPH_DIR / 'student_4_step.wav', mel_cfg['sampling_rate'], audio_student)
+
+    audio_teacher = hifigan(teacher_pred)
+    save_audio(GRAPH_DIR / 'teacher.wav', mel_cfg['sampling_rate'], audio_teacher)
+
+    audio_target = hifigan(gt_mel.to(device))
+    save_audio(GRAPH_DIR / 'ground_truth.wav', mel_cfg['sampling_rate'], audio_target)
+
+def plot_f0_comparison():
+
+    wav_path1 = GRAPH_DIR / "autotuned_emma_twinkle.wav"
+    wav_path2 = GRAPH_DIR / "emma_twinkle.wav"
+    output_path = GRAPH_DIR / "f0_comparison.png"
+    label1 = "Autotuned"
+    label2 = "Original"
+    sr = 24000
+    hop_length = 256
+
+    f0_1 = get_f0(wav_path1, wav=None, method='world', padding=False)
+    f0_2 = get_f0(wav_path2, wav=None, method='world', padding=False)
+    
+    time1 = np.arange(len(f0_1)) * (hop_length / sr)
+    time2 = np.arange(len(f0_2)) * (hop_length / sr)
+    
+    plt.figure(figsize=(12, 6))
+    plt.plot(time1, f0_1, label=label1, alpha=0.7, color='blue')
+    plt.plot(time2, f0_2, label=label2, alpha=0.7, color='red', linestyle='--')
+    
+    plt.title(f"F0 Pitch Comparison: {label1} vs {label2}")
+    plt.xlabel("Time (seconds)")
+    plt.ylabel("Frequency (Hz)")
+    
+    combined_f0 = np.concatenate([f0_1, f0_2])
+    voiced_points = combined_f0[combined_f0 > 0]
+    
+    if len(voiced_points) > 0:
+        plt.ylim(voiced_points.min() - 10, voiced_points.max() + 10)
+    
+    plt.legend()
+    plt.grid(True, which='both', linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    # plt.show()
+    plt.savefig(output_path)
+
+if __name__ == "__main__":
+
+    # Setup
+    with open("test_config.json", "r") as f:
+        args = json.load(f, object_hook=lambda d: SimpleNamespace(**d))
+    with open(args.config) as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    GRAPH_DIR.mkdir(exist_ok=True)
+
+    # Actual graphing
+    # plot_efficiency_barchart(args, config, device)
+    # plot_side_by_side_mel_spectrogram(args, config, device)
+    # generate_and_save_audio(args, config, device)
+    plot_f0_comparison()

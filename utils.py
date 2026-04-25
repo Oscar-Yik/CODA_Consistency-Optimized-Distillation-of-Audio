@@ -405,6 +405,9 @@ def quick_get_f0(wav, sr, method='pyin', padding=True):
         if f0.shape[-1] % 8 !=0:
             f0 = np.pad(f0, ((0, 8-f0.shape[-1] % 8)), 'constant', constant_values=0)
 
+    if f0.shape[-1] % 8 != 0:
+        f0 = np.pad(f0, ((0, 8 - f0.shape[-1] % 8)), 'constant', constant_values=0)
+
     return f0
 
 def quick_get_mel(wav):

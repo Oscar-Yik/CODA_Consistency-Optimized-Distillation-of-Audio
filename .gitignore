@@ -4,3 +4,4 @@ pitch_controller/logs_consistency/
 .DS_Store
 archive_logs/
 ckpt_consistency/
+graphs/
