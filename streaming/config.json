@@ -1,7 +1,7 @@
 {
   "audio": {
-    "chunk_size": 4096,
-    "window_size": 2048,
+    "chunk_size": 8192,
+    "window_size": 4096,
     "raw_sample_rate": 48000,
     "target_sample_rate": 24000
   },

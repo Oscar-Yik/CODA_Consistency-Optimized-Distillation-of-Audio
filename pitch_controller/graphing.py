@@ -16,10 +16,13 @@ from dataset import VCDecLPCDataset, VCDecLPCBatchCollate
 from models.unet import UNetPitcher
 from models.consistency import ConsistencyPitcher
 from modules.BigVGAN.inference import load_model
-from utils import save_audio, save_plot, minmax_norm_diff, reverse_minmax_norm_diff, get_f0
+from utils import save_audio, save_plot, minmax_norm_diff, reverse_minmax_norm_diff, get_f0, calculate_audio_mse
 
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
+
+import seaborn as sns
+import pandas as pd
 
 GRAPH_DIR = Path("graphs")
 
@@ -128,42 +131,67 @@ def student_inference(student, generator, noise_scheduler, f0, content_norm, mel
     return student_preds
 
 def generate_bar_graph(student_mses, teacher_100_mse):
-    print("Generating Graph...")
-    plt.figure(figsize=(9, 6))
-    labels = ['1 Step', '2 Steps', '4 Steps']
+    print("Generating Seaborn Graph...")
     
-    # Create X-axis positions
-    x_positions = np.arange(len(labels) + 1)
+    # 1. Apply Seaborn's modern, clean theme
+    sns.set_theme(style="whitegrid", context="talk")
+    plt.figure(figsize=(10, 6))
+    
+    # 2. Dynamically generate labels based on how many steps you ran
+    step_counts = [2**i for i in range(len(student_mses))] # e.g., 1, 2, 4...
+    labels = [f'{s} Step{"s" if s > 1 else ""}' for s in step_counts]
     all_labels = labels + ['Teacher\n(100 Steps)']
     all_errors = student_mses + [teacher_100_mse]
     
-    # Plot the bars (Green for Student, Red for Teacher)
-    bars = plt.bar(x_positions, all_errors, color=['#2ca02c']*3 + ['#d62728'], edgecolor='black', linewidth=1.2)
+    # Create category labels for the legend
+    categories = ['Consistency Student'] * len(student_mses) + ['Original Teacher']
     
-    # Add the exact MSE values on top of each bar for absolute clarity
-    # We add a tiny vertical offset based on the max error so the text doesn't touch the bar
-    y_offset = max(all_errors) * 0.02
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval + y_offset, f'{yval:.4f}', ha='center', va='bottom', fontweight='bold')
+    # Package into a Pandas DataFrame
+    df = pd.DataFrame({
+        'Model Configuration': all_labels,
+        'Mean Squared Error (MSE)': all_errors,
+        'Model Type': categories
+    })
 
-    plt.title('Inference Efficiency: Consistency Student vs Teacher Baseline', fontweight='bold', pad=20)
-    plt.ylabel('Mean Squared Error (MSE)')
-    plt.xticks(x_positions, all_labels)
+    # --- THE COLOR UPGRADE ---
+    # Pull directly from Seaborn's 'muted' palette (Index 2 is Green, Index 3 is Red)
+    nice_green = sns.color_palette("muted")[2] 
+    nice_red = sns.color_palette("muted")[3]
+
+    # 3. Plot the data using Seaborn's barplot
+    ax = sns.barplot(
+        data=df, 
+        x='Model Configuration', 
+        y='Mean Squared Error (MSE)', 
+        hue='Model Type',
+        palette={'Consistency Student': nice_green, 'Original Teacher': nice_red},
+        dodge=False, # Keeps the bars centered on the X-axis ticks
+        edgecolor='black',
+        linewidth=1.5
+    )
     
-    # Draw a horizontal line showing the Teacher's target performance across the chart
-    plt.axhline(y=teacher_100_mse, color='black', linestyle='--', alpha=0.5, label='Teacher Target Quality (100 Steps)')
+    # 4. Add the exact values perfectly centered on top of each bar
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.4f', padding=5, fontweight='bold', size=11)
+
+    # 5. Add the horizontal baseline
+    plt.axhline(y=teacher_100_mse, color='black', linestyle='--', alpha=0.6, label='Teacher Target Quality')
+
+    # 6. Clean up formatting
+    plt.title('Inference Efficiency: Consistency vs. Baseline', fontweight='bold', pad=20)
+    plt.ylabel('Mean Squared Error (MSE)', fontweight='bold')
+    plt.xlabel('') # Remove redundant X-axis label
     
-    # Clean up the borders
-    plt.gca().spines['top'].set_visible(False)
-    plt.gca().spines['right'].set_visible(False)
+    # Fix the legend so it includes the dashed line and doesn't duplicate titles
+    handles, labels = ax.get_legend_handles_labels()
+    plt.legend(handles=handles, labels=labels, loc='upper right', framealpha=0.9)
     
-    # Move the legend outside the chart if needed, or keep it standard
-    plt.legend(loc='upper right')
-    
+    # Automatically remove the top and right borders for a cleaner look
+    sns.despine()
+
     plt.tight_layout()
-    plt.savefig(GRAPH_DIR / 'bar_chart_efficiency_mse.png', dpi=300)
-    print("Saved clean bar chart to 'bar_chart_efficiency_mse.png'!")
+    plt.savefig(GRAPH_DIR / 'bar_chart_efficiency_seaborn.png', dpi=300)
+    print("Saved clean Seaborn bar chart to 'bar_chart_efficiency_seaborn.png'!")
 
 def generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show):
     print("Generating Side-by-Side Spectrograms...")
@@ -235,9 +263,42 @@ def generate_and_save_audio(args, config, device):
 
 def plot_f0_comparison():
 
+    # wav_path1 = GRAPH_DIR / "autotuned_emma_twinkle.wav"
+    # wav_path2 = GRAPH_DIR / "emma_twinkle.wav"
+    # output_path = GRAPH_DIR / "f0_comparison.png"
+    # label1 = "Autotuned"
+    # label2 = "Original"
+    # sr = 24000
+    # hop_length = 256
+
+    # f0_1 = get_f0(wav_path1, wav=None, method='world', padding=False)
+    # f0_2 = get_f0(wav_path2, wav=None, method='world', padding=False)
+    
+    # time1 = np.arange(len(f0_1)) * (hop_length / sr)
+    # time2 = np.arange(len(f0_2)) * (hop_length / sr)
+    
+    # plt.figure(figsize=(12, 6))
+    # plt.plot(time1, f0_1, label=label1, alpha=0.7, color='blue')
+    # plt.plot(time2, f0_2, label=label2, alpha=0.7, color='red', linestyle='--')
+    
+    # plt.title(f"F0 Pitch Comparison: {label1} vs {label2}")
+    # plt.xlabel("Time (seconds)")
+    # plt.ylabel("Frequency (Hz)")
+    
+    # combined_f0 = np.concatenate([f0_1, f0_2])
+    # voiced_points = combined_f0[combined_f0 > 0]
+    
+    # if len(voiced_points) > 0:
+    #     plt.ylim(voiced_points.min() - 10, voiced_points.max() + 10)
+    
+    # plt.legend()
+    # plt.grid(True, which='both', linestyle='--', alpha=0.5)
+    # plt.tight_layout()
+    # # plt.show()
+    # plt.savefig(output_path)
     wav_path1 = GRAPH_DIR / "autotuned_emma_twinkle.wav"
     wav_path2 = GRAPH_DIR / "emma_twinkle.wav"
-    output_path = GRAPH_DIR / "f0_comparison.png"
+    output_path = GRAPH_DIR / "f0_comparison_seaborn.png"
     label1 = "Autotuned"
     label2 = "Original"
     sr = 24000
@@ -246,28 +307,101 @@ def plot_f0_comparison():
     f0_1 = get_f0(wav_path1, wav=None, method='world', padding=False)
     f0_2 = get_f0(wav_path2, wav=None, method='world', padding=False)
     
+    # --- PITCH TRACKING FIX ---
+    # Replace 0s (unvoiced frames/silence) with NaN so the line breaks cleanly 
+    # instead of plunging straight down to the bottom of the graph.
+    f0_1_clean = np.where(f0_1 > 0, f0_1, np.nan)
+    f0_2_clean = np.where(f0_2 > 0, f0_2, np.nan)
+    
     time1 = np.arange(len(f0_1)) * (hop_length / sr)
     time2 = np.arange(len(f0_2)) * (hop_length / sr)
     
-    plt.figure(figsize=(12, 6))
-    plt.plot(time1, f0_1, label=label1, alpha=0.7, color='blue')
-    plt.plot(time2, f0_2, label=label2, alpha=0.7, color='red', linestyle='--')
+    # --- PANDAS DATAFRAME CONVERSION ---
+    df1 = pd.DataFrame({'Time (seconds)': time1, 'Frequency (Hz)': f0_1_clean, 'Version': label1})
+    df2 = pd.DataFrame({'Time (seconds)': time2, 'Frequency (Hz)': f0_2_clean, 'Version': label2})
+    df = pd.concat([df1, df2], ignore_index=True)
     
-    plt.title(f"F0 Pitch Comparison: {label1} vs {label2}")
-    plt.xlabel("Time (seconds)")
-    plt.ylabel("Frequency (Hz)")
+    print("Generating Seaborn F0 Graph...")
+    
+    # Apply a sleek 'darkgrid' theme for a cool, technical vibe
+    sns.set_theme(style="darkgrid", context="talk")
+    plt.figure(figsize=(12, 6))
+    
+    # Use 'husl' for a highly distinct, vibrant, non-standard color scheme
+    # It generates evenly spaced, high-contrast colors across the spectrum.
+    custom_palette = sns.color_palette("husl", 2)
+    
+    # Seaborn's lineplot handles the hue (colors) and style (solid vs dashed) automatically
+    ax = sns.lineplot(
+        data=df, 
+        x='Time (seconds)', 
+        y='Frequency (Hz)', 
+        hue='Version',
+        style='Version', # Automatically makes one line solid and the other dashed
+        palette=custom_palette,
+        linewidth=2.5,
+        alpha=0.9
+    )
+    
+    plt.title(f"F0 Pitch Contour: {label1} vs {label2}", fontweight='bold', pad=15)
     
     combined_f0 = np.concatenate([f0_1, f0_2])
     voiced_points = combined_f0[combined_f0 > 0]
     
     if len(voiced_points) > 0:
-        plt.ylim(voiced_points.min() - 10, voiced_points.max() + 10)
+        plt.ylim(voiced_points.min() - 15, voiced_points.max() + 15)
     
-    plt.legend()
-    plt.grid(True, which='both', linestyle='--', alpha=0.5)
+    # Clean up the legend title and placement
+    plt.legend(title='', loc='upper right', framealpha=0.9)
+    
+    # Remove the outer bounding box since the darkgrid already anchors the visual space
+    sns.despine(left=True, bottom=True)
+    
     plt.tight_layout()
-    # plt.show()
-    plt.savefig(output_path)
+    plt.savefig(output_path, dpi=300)
+    print(f"Saved F0 comparison to '{output_path}'!")
+
+def plot_streaming_tradeoffs():
+    print("Generating Stacked Trade-off Graphs...")
+    
+    # --- 1. YOUR BENCHMARK DATA ---
+    # Replace these numbers with the actual results you get from running stream.py
+    # at different chunk_size configurations in your config.json
+    data = {
+        'Window Size': ['256', '512', '1024', '2048', '4096'],
+        'Inference Latency (ms)': [34.47, 40.08, 42.67, 85.33, 170.67],          # Get this from your terminal output
+        'MSE Error': [214.1978, 138.0096, 174.5990, 185.6136, 145.6736]  # Calculate MSE vs an offline target
+    }
+    df = pd.DataFrame(data)
+
+    # --- 2. SETUP THE STACKED LAYOUT ---
+    sns.set_theme(style="darkgrid", context="talk")
+    # subplots(2, 1) means 2 rows, 1 column. sharex=True links their bottom axis.
+    _, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    
+    nice_red = sns.color_palette("muted")[3]
+    nice_green = sns.color_palette("muted")[2]
+
+    # --- 3. TOP GRAPH: LATENCY (PERFORMANCE) ---
+    sns.lineplot(data=df, x='Window Size', y='Inference Latency (ms)', ax=ax1, 
+                 color=nice_red, marker='o', markersize=10, linewidth=3)
+    
+    ax1.set_title("The Streaming Trade-off", fontweight='bold', pad=20, fontsize=18)
+    ax1.set_ylabel("Processing Latency\n(Milliseconds)", fontweight='bold')
+
+    # --- 4. BOTTOM GRAPH: QUALITY (ERROR) ---
+    sns.lineplot(data=df, x='Window Size', y='MSE Error', ax=ax2, 
+                 color=nice_green, marker='s', markersize=10, linewidth=3)
+    
+    ax2.set_ylabel("Audio Distortion\n(Mean Squared Error)", fontweight='bold')
+    ax2.set_xlabel("Audio Buffer Chunk Size (Samples)", fontweight='bold')
+
+    # --- 5. CLEANUP & SAVE ---
+    sns.despine(left=True, bottom=True)
+    plt.tight_layout()
+    
+    plt.savefig(GRAPH_DIR / 'streaming_tradeoffs_stacked.png', dpi=300)
+    print("Saved dual graphs to 'streaming_tradeoffs_stacked.png'!")
 
 if __name__ == "__main__":
 
@@ -285,4 +419,11 @@ if __name__ == "__main__":
     # plot_efficiency_barchart(args, config, device)
     # plot_side_by_side_mel_spectrogram(args, config, device)
     # generate_and_save_audio(args, config, device)
-    plot_f0_comparison()
+    # plot_f0_comparison()
+    plot_streaming_tradeoffs()
+
+    # original = GRAPH_DIR / "emma_twinkle.wav"
+    # sizes = [256, 512, 1024, 2048, 4096]
+    # streamed = [GRAPH_DIR / f"streamed_output_window_{size}.wav" for size in sizes]
+    # for stream_audio in streamed:
+    #     calculate_audio_mse(original, stream_audio)

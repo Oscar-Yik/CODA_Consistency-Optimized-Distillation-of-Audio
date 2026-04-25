@@ -104,3 +104,45 @@ def get_f0(wav_path, wav, method='pyin', padding=True):
             f0 = np.pad(f0, ((0, 8-f0.shape[-1] % 8)), 'constant', constant_values=0)
 
     return f0
+
+def calculate_audio_mse(original_wav_path, streamed_wav_path):
+    print("Loading audio files...")
+    sr = 24000
+    
+    # 1. Load both audio files
+    wav_orig, _ = librosa.load(original_wav_path, sr=sr)
+    wav_stream, _ = librosa.load(streamed_wav_path, sr=sr)
+
+    # 2. Align Lengths
+    # Streaming processes in chunks, so the output file often has a fraction 
+    # of a second of extra padding at the very end. We must trim both to match.
+    min_len = min(len(wav_orig), len(wav_stream))
+    wav_orig = wav_orig[:min_len]
+    wav_stream = wav_stream[:min_len]
+
+    print("Converting to Mel-Spectrograms...")
+    # 3. Convert to Mel-Spectrograms using your project's standard parameters
+    mel_orig = librosa.feature.melspectrogram(y=wav_orig, sr=sr, n_fft=1024, hop_length=256, n_mels=100)
+    mel_stream = librosa.feature.melspectrogram(y=wav_stream, sr=sr, n_fft=1024, hop_length=256, n_mels=100)
+
+    # Convert to Log-Mel (Decibels) to match human hearing perception
+    log_mel_orig = librosa.power_to_db(mel_orig, ref=np.max)
+    log_mel_stream = librosa.power_to_db(mel_stream, ref=np.max)
+
+    # 4. Calculate Mean Squared Error (MSE)
+    tensor_orig = torch.from_numpy(log_mel_orig)
+    tensor_stream = torch.from_numpy(log_mel_stream)
+
+    mse = F.mse_loss(tensor_orig, tensor_stream).item()
+    
+    # Optional: Calculate Mean Absolute Error (L1 Loss) as well
+    mae = F.l1_loss(tensor_orig, tensor_stream).item()
+
+    print("-" * 40)
+    print(f"Original: {original_wav_path}")
+    print(f"Streamed: {streamed_wav_path}")
+    print(f"--> Mel-Spectrogram MSE: {mse:.4f}")
+    print(f"--> Mel-Spectrogram MAE: {mae:.4f}")
+    print("-" * 40)
+
+    return mse

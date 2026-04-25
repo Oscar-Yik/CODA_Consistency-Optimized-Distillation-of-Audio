@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-
+import seaborn as sns
+import pandas as pd
 
 class LatencyBenchmarker:
     def __init__(self, chunk_size, sample_rate, warmup_steps=20):
@@ -34,15 +35,18 @@ class LatencyBenchmarker:
         return series[self.warmup_steps:]
 
     def show_graph(self,
-                   save_path="streaming/benchmarking/latency_benchmarks.png",
-                   inference_save_path="streaming/benchmarking/inference_benchmarks.png"):
+                   save_path="streaming/benchmarking/latency_benchmarks_seaborn.png",
+                   inference_save_path="streaming/benchmarking/inference_benchmarks_seaborn.png"):
         buffer_budget = (self.chunk_size / self.sample_rate) * 1000  # max latency before audio breaks
 
         if len(self.total_latencies) <= self.warmup_steps:
             print(f"Not enough data to plot (only {len(self.total_latencies)} samples)")
             return
 
-        # ---------- Graph 1: total vs hw vs inference ----------
+        # Apply Seaborn's modern theme
+        sns.set_theme(style="darkgrid", context="talk")
+
+        # ---------- Graph 1: Total vs HW vs Inference ----------
         plot_total = self._post_warmup(self.total_latencies)
         plot_hw = self._post_warmup(self.hw_latencies)
         plot_inf = self._post_warmup(self.inference_latencies)
@@ -51,28 +55,41 @@ class LatencyBenchmarker:
         inf_avg = np.mean(plot_inf)
         hw_avg = np.mean(plot_hw)
 
-        plt.figure(figsize=(10, 5))
-        plt.plot(plot_total, label="Total (HW + Inference)", color='#3498db')
-        plt.plot(plot_hw, label=f'HW Baseline ({hw_avg:.2f}ms)', color='#2ecc71', alpha=0.6)
-        plt.plot(plot_inf, label="Inference", color='#f1c40f', linewidth=2)
+        # Package data into a Pandas DataFrame for Seaborn
+        df1 = pd.DataFrame({
+            'Total (HW + Inference)': plot_total,
+            'Inference': plot_inf,
+            'HW Baseline': plot_hw
+        })
 
-        plt.axhline(y=buffer_budget, color="#cc1f0c", linestyle=':',
+        plt.figure(figsize=(12, 6))
+        
+        # Use a high-contrast 'husl' palette for the main pipeline metrics
+        palette1 = sns.color_palette("husl", 3)
+        sns.lineplot(data=df1, palette=palette1, linewidth=2.5, alpha=0.9)
+
+        # Add horizontal threshold/average lines
+        plt.axhline(y=buffer_budget, color="red", linestyle=':', linewidth=2.5,
                     label=f'Buffer Budget ({buffer_budget:.2f}ms)')
-        plt.axhline(y=total_avg, color="#ee00ff", linestyle='--',
+        plt.axhline(y=total_avg, color=palette1[0], linestyle='--', alpha=0.7,
                     label=f'Total Avg: {total_avg:.2f}ms')
-        plt.axhline(y=inf_avg, color="#eb7c22", linestyle='--',
+        plt.axhline(y=inf_avg, color=palette1[1], linestyle='--', alpha=0.7,
                     label=f'Inference Avg: {inf_avg:.2f}ms')
 
-        plt.title(f"Real-Time Pitch Correction Latencies (Skipping First {self.warmup_steps} Iterations)")
-        plt.ylabel("Milliseconds")
-        plt.xlabel("Buffer Iterations")
-        plt.legend()
+        plt.title(f"Real-Time Pitch Correction Latencies (Skipping First {self.warmup_steps} Iterations)", fontweight='bold', pad=15)
+        plt.ylabel("Latency (Milliseconds)", fontweight='bold')
+        plt.xlabel("Buffer Iterations", fontweight='bold')
+        
+        # Clean up legend
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', framealpha=0.9)
+        sns.despine(left=True, bottom=True)
+        
         plt.tight_layout()
-        plt.savefig(save_path)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Latency graph saved to {save_path}")
 
-        # ---------- Graph 2: inference breakdown ----------
+        # ---------- Graph 2: Inference Breakdown ----------
         plot_pre = self._post_warmup(self.preprocess_latencies)
         plot_model = self._post_warmup(self.model_latencies)
         plot_voc = self._post_warmup(self.vocoder_latencies)
@@ -85,28 +102,41 @@ class LatencyBenchmarker:
         model_avg = np.mean(plot_model)
         voc_avg = np.mean(plot_voc)
 
-        plt.figure(figsize=(10, 5))
-        plt.plot(plot_inf, label="Total Inference", color='#f1c40f', linewidth=2)
-        plt.plot(plot_pre, label="Preprocess", color='#1abc9c', alpha=0.8)
-        plt.plot(plot_model, label="Model", color='#9b59b6', alpha=0.8)
-        plt.plot(plot_voc, label="Vocoder", color='#34495e', alpha=0.8)
+        # Package data into a Pandas DataFrame
+        df2 = pd.DataFrame({
+            'Total Inference': plot_inf,
+            'Model': plot_model,
+            'Vocoder': plot_voc,
+            'Preprocess': plot_pre
+        })
 
-        plt.axhline(y=buffer_budget, color="#cc1f0c", linestyle=':',
+        plt.figure(figsize=(12, 6))
+        
+        # Use 'Set2' for distinctly separating the sub-components
+        palette2 = sns.color_palette("Set2", 4)
+        sns.lineplot(data=df2, palette=palette2, linewidth=2.5, alpha=0.9)
+
+        # Add horizontal threshold/average lines
+        plt.axhline(y=buffer_budget, color="red", linestyle=':', linewidth=2.5,
                     label=f'Buffer Budget ({buffer_budget:.2f}ms)')
-        plt.axhline(y=inf_avg, color='#f1c40f', linestyle='--',
+        plt.axhline(y=inf_avg, color=palette2[0], linestyle='--', alpha=0.7,
                     label=f'Inference Avg: {inf_avg:.2f}ms')
-        plt.axhline(y=pre_avg, color='#1abc9c', linestyle='--',
-                    label=f'Preprocess Avg: {pre_avg:.2f}ms')
-        plt.axhline(y=model_avg, color='#9b59b6', linestyle='--',
+        plt.axhline(y=model_avg, color=palette2[1], linestyle='--', alpha=0.7,
                     label=f'Model Avg: {model_avg:.2f}ms')
-        plt.axhline(y=voc_avg, color='#34495e', linestyle='--',
+        plt.axhline(y=voc_avg, color=palette2[2], linestyle='--', alpha=0.7,
                     label=f'Vocoder Avg: {voc_avg:.2f}ms')
+        plt.axhline(y=pre_avg, color=palette2[3], linestyle='--', alpha=0.7,
+                    label=f'Preprocess Avg: {pre_avg:.2f}ms')
 
-        plt.title(f"Inference Breakdown (Skipping First {self.warmup_steps} Iterations)")
-        plt.ylabel("Milliseconds")
-        plt.xlabel("Buffer Iterations")
-        plt.legend()
+        plt.title(f"Inference Component Breakdown (Skipping First {self.warmup_steps} Iterations)", fontweight='bold', pad=15)
+        plt.ylabel("Latency (Milliseconds)", fontweight='bold')
+        plt.xlabel("Buffer Iterations", fontweight='bold')
+        
+        # Move legend outside the plot so it doesn't cover data lines
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', framealpha=0.9)
+        sns.despine(left=True, bottom=True)
+        
         plt.tight_layout()
-        plt.savefig(inference_save_path)
+        plt.savefig(inference_save_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Inference breakdown graph saved to {inference_save_path}")
