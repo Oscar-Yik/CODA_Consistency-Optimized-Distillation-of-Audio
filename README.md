@@ -9,6 +9,12 @@ This repository is based on the [DiffPitcher](https://github.com/haidog-yaqub/Di
 ### Model weights: 
 https://drive.google.com/drive/folders/1g2FPZHMl1Upy9fooInuYx_wrQuInZWUP?usp=sharing
 
+# CODA Example
+Produces an autotuned version of `examples/emma_twinkle.wav` called `output_emma_twinkle.wav` using the CODA model.
+```
+uv pip install -r requirements.txt
+uv run coda.py
+```
 
 # Streaming
 Supports streaming from mic or file.
@@ -82,7 +88,7 @@ tar -xvzf OpenSinger.tar.gz --exclude="*.txt" --exclude="*.lab"
 The unzipped files should be around 15 GB. Then run
 ```
 cd pitch_controller
-uv run prepare_train_data.py
+uv run prepare_data.py
 ```
 
 Then folder structure should look like this
@@ -107,7 +113,7 @@ data/
 
 now run
 ```
-uv run  train_consistency.py 
+uv run train_consistency.py 
 ```
 
 
