@@ -18,7 +18,6 @@ from utils import get_mel, get_world_mel, get_f0, f0_to_coarse, show_plot, get_m
 @torch.no_grad()
 def template_pitcher(source, pitch_ref, model, hifigan, steps=50, shift_semi=0):
 
-    entire_time = time.time()
     source_mel = get_world_mel(source, sr=sr)
 
     f0_ref = get_matched_f0(x=source, y=pitch_ref, method='world', key="bb major")
@@ -49,14 +48,11 @@ def template_pitcher(source, pitch_ref, model, hifigan, steps=50, shift_semi=0):
                                     sample=pred,
                                     eta=1, generator=generator).prev_sample
         print(f"iteration {i}: took {time.time() - start_time}seconds")
-    print(f"Whole time: {time.time() - big_start_time}seconds")
 
     pred = reverse_minmax_norm_diff(pred, vmax=max_mel, vmin=min_mel)
 
     pred_audio = hifigan(pred)
     pred_audio = pred_audio.cpu().squeeze().clamp(-1, 1)
-
-    print(f"Whole thing took: {time.time() - entire_time}seconds")
 
     return pred_audio
 
@@ -93,5 +89,3 @@ if __name__ == '__main__':
     # pred_audio = template_pitcher('examples/off-key.wav', 'examples/reference.wav', model, hifigan, steps=50, shift_semi=0)
     pred_audio = template_pitcher('examples/emma_twinkle.wav', 'examples/emma_twinkle.wav', model, hifigan, steps=50, shift_semi=0)
     sf.write('output_template.wav', pred_audio, samplerate=sr)
-
-

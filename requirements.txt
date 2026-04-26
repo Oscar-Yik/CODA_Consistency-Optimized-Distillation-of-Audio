@@ -11,6 +11,7 @@ pyaudio
 pysptk
 pyworld
 scipy
+seaborn
 soundfile
 tgt
 torch
