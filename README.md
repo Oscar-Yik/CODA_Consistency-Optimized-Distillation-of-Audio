@@ -9,6 +9,8 @@ This repository is based on the [DiffPitcher](https://github.com/haidog-yaqub/Di
 ### Model weights: 
 https://drive.google.com/drive/folders/1g2FPZHMl1Upy9fooInuYx_wrQuInZWUP?usp=sharing
 
+# Inference
+Run `uv run coda.py` to to see an example of CODA performing 4-step inference on an out of tune audio file.
 
 # Streaming
 Supports streaming from mic or file.
