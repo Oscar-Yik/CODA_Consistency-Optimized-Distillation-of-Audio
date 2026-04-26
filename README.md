@@ -10,7 +10,7 @@ This repository is based on the [DiffPitcher](https://github.com/haidog-yaqub/Di
 https://drive.google.com/drive/folders/1g2FPZHMl1Upy9fooInuYx_wrQuInZWUP?usp=sharing
 
 # Inference
-Run `uv run coda.py` to to see an example of CODA performing 4-step inference on an out of tune audio file.
+Run `uv run coda.py` to to see an example of CODA performing 4-step inference on an out-of-tune audio file.
 
 # Streaming
 Supports streaming from mic or file.
@@ -27,10 +27,9 @@ All configuration is inside of `streaming/config.json`
     "target_sample_rate": 24000
 },
 ```
-My computer's native sample rate is 48k; adjust yours if it differs. We downsample this input to a 24k target rate. Note that `chunk_siz`e is defined relative to the `raw_sample_rate`, while `window_size` is relative to the `target_sample_rate`. Under this configuration, the window_size is numerically half of the chunk_size, but they represent the exact same temporal duration. The chunk size is how much data we buffer before actually processing it, and the window size is how much data we process each time we get a new `chunk_size` of data. 
+The default native sample rate is 48k; adjust yours if it differs. We downsample this input to a 24k target rate. Note that `chunk_size` is defined relative to the `raw_sample_rate`, while `window_size` is relative to the `target_sample_rate`. Under this configuration, the w`indow_size` is numerically half of the chunk_size, but they represent the exact same temporal duration. The chunk size is how much data we buffer before actually processing it, and the window size is how much data we process each time we get a new `chunk_size` of data. 
 
-
-In actual autotune, what you would do is have a larger `window_size` temporal duration compared to `chunk_size`, so that the model output would be "smoother". You can also fade in a new window (by overlapping the begining of that window with the previous window) to further reduce boundary artifacts. With the current sampling configuration, `window_size` cannot be less than half of `chunk_size`. Lowering these will 1. make the delay between when you sing something and when the computer outputs something shorter and 2. make the audio quality worse.
+To reduce boundary conditions, it would be beneficial to have a larger `window_size` temporal duration compared to `chunk_size`. It is common to fade in a new window (by overlapping the begining of that window with the previous window) to further reduce boundary artifacts. With the current sampling configuration, `window_size` cannot be less than half of `chunk_size`. Lowering these will 1. decrease the delay latency and 2. make the audio quality worse.
 
 #### Source
 ```json
