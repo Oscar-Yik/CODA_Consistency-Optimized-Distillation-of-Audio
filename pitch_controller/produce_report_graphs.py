@@ -1,10 +1,7 @@
-import os
 import yaml
 import json
-import shutil
 from tqdm import tqdm
 import numpy as np
-import librosa 
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -16,7 +13,7 @@ from dataset import VCDecLPCDataset, VCDecLPCBatchCollate
 from models.unet import UNetPitcher
 from models.consistency import ConsistencyPitcher
 from modules.BigVGAN.inference import load_model
-from utils import save_audio, save_plot, minmax_norm_diff, reverse_minmax_norm_diff, get_f0, calculate_audio_mse
+from utils import save_audio, minmax_norm_diff, reverse_minmax_norm_diff, get_f0, calculate_audio_mse
 
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
@@ -45,7 +42,6 @@ def load(args, config, device):
     noise_scheduler.set_timesteps(ddpm_cfg['inference_steps'])
     generator = torch.Generator(device=device).manual_seed(2024)
 
-    # --- 2. LOAD MODELS ---
     print("Loading Teacher...")
     teacher = UNetPitcher(**unet_cfg).to(device)
     t_state = torch.load('../ckpts/world_fixed_40.pt', map_location=device, weights_only=True)
@@ -85,7 +81,6 @@ def teacher_inference(teacher, generator, noise_scheduler, f0, content_norm, mel
             x_t_teacher = step_output.prev_sample
 
             if target_step_idx is not None and i == target_step_idx:
-                # pred_original_sample is the UNet's CURRENT guess for the final clean audio
                 current_guess = step_output.pred_original_sample
                 return reverse_minmax_norm_diff(current_guess, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
             
@@ -99,7 +94,7 @@ def student_mel(student, generator, noise_scheduler, f0, content_norm, mel_cfg, 
     return student_mel_show
 
 def student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device):
-    milestones = [[0], [0, 50], [0, 25, 50, 75]]
+    milestones = [[0], [0, 50], [0, 30, 60], [0, 25, 50, 75]]
     student_preds = student_inference(student, generator, noise_scheduler, f0, content_norm, mel_cfg, device, milestones)
     student_mses = [F.mse_loss(student_pred, gt_mel).item() for student_pred in student_preds]
     return student_mses
@@ -110,7 +105,6 @@ def student_inference(student, generator, noise_scheduler, f0, content_norm, mel
 
     with torch.no_grad():
         for chain in milestones:
-            # Reset random noise for fairness
             current_input = torch.randn_like(content_norm, generator=generator).to(device)
             
             for step_num, current_t_idx in enumerate(chain):
@@ -133,62 +127,49 @@ def student_inference(student, generator, noise_scheduler, f0, content_norm, mel
 def generate_bar_graph(student_mses, teacher_100_mse):
     print("Generating Seaborn Graph...")
     
-    # 1. Apply Seaborn's modern, clean theme
     sns.set_theme(style="whitegrid", context="talk")
     plt.figure(figsize=(10, 6))
     
-    # 2. Dynamically generate labels based on how many steps you ran
-    step_counts = [2**i for i in range(len(student_mses))] # e.g., 1, 2, 4...
+    step_counts = range(1, len(student_mses) + 1)
     labels = [f'{s} Step{"s" if s > 1 else ""}' for s in step_counts]
     all_labels = labels + ['Teacher\n(100 Steps)']
     all_errors = student_mses + [teacher_100_mse]
-    
-    # Create category labels for the legend
+
     categories = ['Consistency Student'] * len(student_mses) + ['Original Teacher']
-    
-    # Package into a Pandas DataFrame
+
     df = pd.DataFrame({
         'Model Configuration': all_labels,
         'Mean Squared Error (MSE)': all_errors,
         'Model Type': categories
     })
 
-    # --- THE COLOR UPGRADE ---
-    # Pull directly from Seaborn's 'muted' palette (Index 2 is Green, Index 3 is Red)
     nice_green = sns.color_palette("muted")[2] 
     nice_red = sns.color_palette("muted")[3]
 
-    # 3. Plot the data using Seaborn's barplot
     ax = sns.barplot(
         data=df, 
         x='Model Configuration', 
         y='Mean Squared Error (MSE)', 
         hue='Model Type',
         palette={'Consistency Student': nice_green, 'Original Teacher': nice_red},
-        dodge=False, # Keeps the bars centered on the X-axis ticks
+        dodge=False,
         edgecolor='black',
         linewidth=1.5
     )
 
     ax.set_yscale("log")
-    
-    # 4. Add the exact values perfectly centered on top of each bar
+
     for container in ax.containers:
         ax.bar_label(container, fmt='%.4f', padding=5, fontweight='bold', size=11)
 
-    # 5. Add the horizontal baseline
     plt.axhline(y=teacher_100_mse, color='black', linestyle='--', alpha=0.6, label='Teacher Target Quality')
 
-    # 6. Clean up formatting
     plt.title('Inference Efficiency: Consistency vs. Baseline', fontweight='bold', pad=20)
     plt.ylabel('Mean Squared Error (MSE) [Log Scale]', fontweight='bold')
     plt.xlabel('') # Remove redundant X-axis label
     
-    # Fix the legend so it includes the dashed line and doesn't duplicate titles
     handles, labels = ax.get_legend_handles_labels()
     plt.legend(handles=handles, labels=labels, loc='upper right', framealpha=0.9)
-    
-    # Automatically remove the top and right borders for a cleaner look
     sns.despine()
 
     plt.tight_layout()
@@ -199,24 +180,20 @@ def generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show):
     print("Generating Side-by-Side Spectrograms...")
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     
-    # Global color limits so all graphs share the exact same heat scale
     vmin = min(gt_mel_show.min(), student_mel_show.min(), teacher_mel_show.min())
     vmax = max(gt_mel_show.max(), student_mel_show.max(), teacher_mel_show.max())
     
-    # 5a. Ground Truth
     im0 = axes[0].imshow(gt_mel_show, aspect="auto", origin="lower", interpolation='none', vmin=vmin, vmax=vmax)
     axes[0].set_title('Ground Truth (Original Audio)', fontsize=14, fontweight='bold')
     axes[0].set_xlabel('Time Frames')
     axes[0].set_ylabel('Mel Frequency Bins')
     fig.colorbar(im0, ax=axes[0])
 
-    # 5b. Teacher UNet (4 Steps)
     im1 = axes[1].imshow(teacher_mel_show, aspect="auto", origin="lower", interpolation='none', vmin=vmin, vmax=vmax)
     axes[1].set_title('Original UNet (4 Steps DDIM)', fontsize=14, fontweight='bold', color='#d62728')
     axes[1].set_xlabel('Time Frames')
     fig.colorbar(im1, ax=axes[1])
 
-    # 5c. Consistency Student (4 Steps)
     im2 = axes[2].imshow(student_mel_show, aspect="auto", origin="lower", interpolation='none', vmin=vmin, vmax=vmax)
     axes[2].set_title('Consistency Model (4 Chain Steps)', fontsize=14, fontweight='bold', color='#2ca02c')
     axes[2].set_xlabel('Time Frames')
@@ -239,54 +216,39 @@ def plot_side_by_side_mel_spectrogram(args, config, device):
 
 def plot_efficiency_barchart(args, config, device, num_samples=100):
 
-    # student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg = load(args, config, device)
-
-    # teacher_100_mse = teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
-    # student_mses = student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
-    # generate_bar_graph(student_mses, teacher_100_mse)
-
     student, teacher, generator, noise_scheduler, _, _, _, mel_cfg = load(args, config, device)
 
-    # 2. Re-initialize the DataLoader to stream our full test set
     train_set = VCDecLPCDataset(args.data_dir, subset='test', content_dir=args.lpc_dir, f0_type="log")
     collate_fn = VCDecLPCBatchCollate(args.train_frames)
     loader = DataLoader(train_set, batch_size=1, shuffle=False, collate_fn=collate_fn)
 
-    # We know from your student_mse function that there are 4 milestones
-    milestones = [[0], [0, 50], [0, 25, 50, 75]] 
+    milestones = [[0], [0, 50], [0, 30, 60], [0, 25, 50, 75]] 
     
-    # Trackers for the cumulative MSEs
     teacher_mse_sum = 0.0
     student_mse_sums = [0.0] * len(milestones)
     
-    # Safety catch just in case your test folder has fewer than 100 samples
     actual_samples = min(num_samples, len(loader))
     
     print(f"\n--- Starting Robust Evaluation over {actual_samples} Samples ---")
     
-    # 3. The Evaluation Loop
     for i, batch in enumerate(loader):
         if i >= actual_samples:
             break
             
         print(f"\nEvaluating Sample {i+1}/{actual_samples}...")
         
-        # Unpack the current batch
         gt_mel = batch['mel1'].to(device)
         content = batch['content1'].to(device)
         f0 = batch['f0_1'].to(device).long()
         content_norm = minmax_norm_diff(content, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
         
-        # Calculate errors for this specific audio sample
         t_mse = teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
         s_mses = student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
         
-        # Add to our running totals
         teacher_mse_sum += t_mse
         for j in range(len(milestones)):
             student_mse_sums[j] += s_mses[j]
-            
-    # 4. Calculate Final Averages
+
     avg_teacher_mse = teacher_mse_sum / actual_samples
     avg_student_mses = [s_sum / actual_samples for s_sum in student_mse_sums]
 
@@ -295,7 +257,6 @@ def plot_efficiency_barchart(args, config, device, num_samples=100):
     for j, chain in enumerate(milestones):
         print(f"Student ({len(chain)} steps) MSE: {avg_student_mses[j]:.4f}")
 
-    # 5. Generate the Graph with the highly accurate averaged data!
     generate_bar_graph(avg_student_mses, avg_teacher_mse)
 
 def generate_and_save_audio(args, config, device):
@@ -329,37 +290,29 @@ def plot_f0_comparison():
     f0_1 = get_f0(wav_path1, wav=None, method='world', padding=False)
     f0_2 = get_f0(wav_path2, wav=None, method='world', padding=False)
     
-    # --- PITCH TRACKING FIX ---
-    # Replace 0s (unvoiced frames/silence) with NaN so the line breaks cleanly 
-    # instead of plunging straight down to the bottom of the graph.
     f0_1_clean = np.where(f0_1 > 0, f0_1, np.nan)
     f0_2_clean = np.where(f0_2 > 0, f0_2, np.nan)
     
     time1 = np.arange(len(f0_1)) * (hop_length / sr)
     time2 = np.arange(len(f0_2)) * (hop_length / sr)
     
-    # --- PANDAS DATAFRAME CONVERSION ---
     df1 = pd.DataFrame({'Time (seconds)': time1, 'Frequency (Hz)': f0_1_clean, 'Version': label1})
     df2 = pd.DataFrame({'Time (seconds)': time2, 'Frequency (Hz)': f0_2_clean, 'Version': label2})
     df = pd.concat([df1, df2], ignore_index=True)
     
     print("Generating Seaborn F0 Graph...")
     
-    # Apply a sleek 'darkgrid' theme for a cool, technical vibe
     sns.set_theme(style="darkgrid", context="talk")
     plt.figure(figsize=(12, 6))
     
-    # Use 'husl' for a highly distinct, vibrant, non-standard color scheme
-    # It generates evenly spaced, high-contrast colors across the spectrum.
     custom_palette = sns.color_palette("husl", 2)
     
-    # Seaborn's lineplot handles the hue (colors) and style (solid vs dashed) automatically
     ax = sns.lineplot(
         data=df, 
         x='Time (seconds)', 
         y='Frequency (Hz)', 
         hue='Version',
-        style='Version', # Automatically makes one line solid and the other dashed
+        style='Version',
         palette=custom_palette,
         linewidth=2.5,
         alpha=0.9
@@ -384,10 +337,7 @@ def plot_f0_comparison():
     if len(voiced_points) > 0:
         plt.ylim(voiced_points.min() - 15, voiced_points.max() + 15)
     
-    # Clean up the legend title and placement
     plt.legend(title='', loc='upper right', framealpha=0.9)
-    
-    # Remove the outer bounding box since the darkgrid already anchors the visual space
     sns.despine(left=True, bottom=True)
     
     plt.tight_layout()
@@ -399,7 +349,7 @@ def plot_streaming_tradeoffs(calculate_mse = False):
     
     sizes = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
     mses = [223.527, 166.592, 158.925, 153.565, 76.477, 68.271, 58.853, 56.268, 49.164]
-    if calculate_audio_mse:
+    if calculate_mse:
         original = GRAPH_DIR / "emma_twinkle.wav"
         sizes = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
         streamed = [GRAPH_DIR / f"streamed_output_{size}.wav" for size in sizes]
@@ -408,41 +358,33 @@ def plot_streaming_tradeoffs(calculate_mse = False):
             mse = calculate_audio_mse(original, stream_audio)
             mses.append(mse)
 
-    # --- 1. YOUR BENCHMARK DATA ---
-    # Replace these numbers with the actual results you get from running stream.py
-    # at different chunk_size configurations in your config.json
     window_chunks = [str(round(chunk/24)) for chunk in sizes]
 
     data = {
         'Window Size (ms)': window_chunks,
-        'Inference Latency (ms)': [37.322, 35.118, 35.082, 35.376, 36.744, 42.325, 41.43, 57.54, 56.441],          # Get this from your terminal output
-        'MSE Error': mses  # Calculate MSE vs an offline target
+        'Inference Latency (ms)': [37.322, 35.118, 35.082, 35.376, 36.744, 42.325, 41.43, 57.54, 56.441],
+        'MSE Error': mses
     }
     df = pd.DataFrame(data)
 
-    # --- 2. SETUP THE STACKED LAYOUT ---
     sns.set_theme(style="darkgrid", context="talk")
-    # subplots(2, 1) means 2 rows, 1 column. sharex=True links their bottom axis.
     _, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     
     nice_red = sns.color_palette("muted")[3]
     nice_green = sns.color_palette("muted")[2]
 
-    # --- 3. TOP GRAPH: LATENCY (PERFORMANCE) ---
     sns.lineplot(data=df, x='Window Size (ms)', y='Inference Latency (ms)', ax=ax1, 
                  color=nice_red, marker='o', markersize=10, linewidth=3)
     
     ax1.set_title("The Streaming Trade-off", fontweight='bold', pad=20, fontsize=18)
     ax1.set_ylabel("Processing Latency\n(Milliseconds)", fontweight='bold')
 
-    # --- 4. BOTTOM GRAPH: QUALITY (ERROR) ---
     sns.lineplot(data=df, x='Window Size (ms)', y='MSE Error', ax=ax2, 
                  color=nice_green, marker='s', markersize=10, linewidth=3)
     
     ax2.set_ylabel("Audio Distortion\n(Mean Squared Error)", fontweight='bold')
     ax2.set_xlabel("Audio Window Size (ms)", fontweight='bold')
 
-    # --- 5. CLEANUP & SAVE ---
     sns.despine(left=True, bottom=True)
     plt.tight_layout()
     
@@ -461,10 +403,10 @@ if __name__ == "__main__":
 
     GRAPH_DIR.mkdir(exist_ok=True)
 
-    # Actual graphing
-    # plot_efficiency_barchart(args, config, device)
-    generate_bar_graph([20.0005, 0.8958, 0.2718], 0.2840)
-    # plot_side_by_side_mel_spectrogram(args, config, device)
-    # generate_and_save_audio(args, config, device)
-    # plot_f0_comparison()
-    # plot_streaming_tradeoffs(calculate_mse=False)
+    # Produce all graphs
+    plot_efficiency_barchart(args, config, device)
+    # generate_bar_graph([19.0729, 0.8148, 0.3251, 0.2519], 0.2840)
+    plot_side_by_side_mel_spectrogram(args, config, device)
+    generate_and_save_audio(args, config, device)
+    plot_f0_comparison()
+    plot_streaming_tradeoffs(calculate_mse=False)
