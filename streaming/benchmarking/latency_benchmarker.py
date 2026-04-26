@@ -35,8 +35,8 @@ class LatencyBenchmarker:
         return series[self.warmup_steps:]
 
     def show_graph(self,
-                   save_path="streaming/benchmarking/latency_benchmarks_seaborn.png",
-                   inference_save_path="streaming/benchmarking/inference_benchmarks_seaborn.png"):
+                   save_path="streaming/benchmarking/latency_benchmarks_seaborn.pdf",
+                   inference_save_path="streaming/benchmarking/inference_benchmarks_seaborn.pdf"):
         buffer_budget = (self.chunk_size / self.sample_rate) * 1000  # max latency before audio breaks
 
         if len(self.total_latencies) <= self.warmup_steps:
@@ -85,7 +85,7 @@ class LatencyBenchmarker:
         sns.despine(left=True, bottom=True)
         
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, bbox_inches='tight')
         plt.close()
         print(f"Latency graph saved to {save_path}")
 
@@ -118,7 +118,7 @@ class LatencyBenchmarker:
 
         # Add horizontal threshold/average lines
         plt.axhline(y=buffer_budget, color="red", linestyle=':', linewidth=2.5,
-                    label=f'Buffer Budget ({buffer_budget:.2f}ms)')
+                    label=f'Buffer Budget {buffer_budget:.2f}ms')
         plt.axhline(y=inf_avg, color=palette2[0], linestyle='--', alpha=0.7,
                     label=f'Inference Avg: {inf_avg:.2f}ms')
         plt.axhline(y=model_avg, color=palette2[1], linestyle='--', alpha=0.7,
@@ -128,7 +128,9 @@ class LatencyBenchmarker:
         plt.axhline(y=pre_avg, color=palette2[3], linestyle='--', alpha=0.7,
                     label=f'Preprocess Avg: {pre_avg:.2f}ms')
 
-        plt.title(f"Inference Component Breakdown (Skipping First {self.warmup_steps} Iterations)", fontweight='bold', pad=15)
+        print(f"Inference Avg: {inf_avg}")
+
+        plt.title(f"Streaming Inference Component Breakdown", fontweight='bold', pad=15)
         plt.ylabel("Latency (Milliseconds)", fontweight='bold')
         plt.xlabel("Buffer Iterations", fontweight='bold')
         
@@ -137,6 +139,6 @@ class LatencyBenchmarker:
         sns.despine(left=True, bottom=True)
         
         plt.tight_layout()
-        plt.savefig(inference_save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(inference_save_path, bbox_inches='tight')
         plt.close()
         print(f"Inference breakdown graph saved to {inference_save_path}")

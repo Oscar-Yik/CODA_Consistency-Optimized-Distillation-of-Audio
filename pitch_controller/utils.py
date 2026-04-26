@@ -106,7 +106,6 @@ def get_f0(wav_path, wav, method='pyin', padding=True):
     return f0
 
 def calculate_audio_mse(original_wav_path, streamed_wav_path):
-    print("Loading audio files...")
     sr = 24000
     
     # 1. Load both audio files
@@ -120,7 +119,6 @@ def calculate_audio_mse(original_wav_path, streamed_wav_path):
     wav_orig = wav_orig[:min_len]
     wav_stream = wav_stream[:min_len]
 
-    print("Converting to Mel-Spectrograms...")
     # 3. Convert to Mel-Spectrograms using your project's standard parameters
     mel_orig = librosa.feature.melspectrogram(y=wav_orig, sr=sr, n_fft=1024, hop_length=256, n_mels=100)
     mel_stream = librosa.feature.melspectrogram(y=wav_stream, sr=sr, n_fft=1024, hop_length=256, n_mels=100)
@@ -134,15 +132,5 @@ def calculate_audio_mse(original_wav_path, streamed_wav_path):
     tensor_stream = torch.from_numpy(log_mel_stream)
 
     mse = F.mse_loss(tensor_orig, tensor_stream).item()
-    
-    # Optional: Calculate Mean Absolute Error (L1 Loss) as well
-    mae = F.l1_loss(tensor_orig, tensor_stream).item()
-
-    print("-" * 40)
-    print(f"Original: {original_wav_path}")
-    print(f"Streamed: {streamed_wav_path}")
-    print(f"--> Mel-Spectrogram MSE: {mse:.4f}")
-    print(f"--> Mel-Spectrogram MAE: {mae:.4f}")
-    print("-" * 40)
 
     return mse

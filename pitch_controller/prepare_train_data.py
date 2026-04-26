@@ -25,7 +25,7 @@ get_world_mel = root_utils.get_world_mel
 DATA_DIR = '../data/OpenSinger'
 MAN_DIR = os.path.join(DATA_DIR, 'ManRaw')
 WOMAN_DIR = os.path.join(DATA_DIR, 'WomanRaw')
-TEST_DIR = '../data/test_samples'
+TEST_DIR = '../data/m4singer'
 TRAINING_DATA_DIR = '../data/training'
 META_CSV = '../data/meta_fix.csv'
 
@@ -113,6 +113,8 @@ def multiprocessing(max_workers=4, subset="train"):
     if not tasks:
         print("No files found. Check your DATA_DIR paths.")
         sys.exit()
+
+    tasks = tasks[:100]
 
     # 2. Parallel Execution
     results_to_write = []
