@@ -145,4 +145,4 @@ def multiprocessing(max_workers=4, subset="train"):
     print(f"Done. Processed {len(results_to_write)} files.")
 
 if __name__ == '__main__':
-    multiprocessing(max_workers=6, subset="test")
+    multiprocessing(max_workers=6, subset="train")

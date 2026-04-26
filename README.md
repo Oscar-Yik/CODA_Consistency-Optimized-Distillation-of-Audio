@@ -83,7 +83,7 @@ tar -xvzf OpenSinger.tar.gz --exclude="*.txt" --exclude="*.lab"
 The unzipped files should be around 15 GB. Then run
 ```
 cd pitch_controller
-uv run prepare_train_data.py
+uv run prepare_data.py
 ```
 
 Then folder structure should look like this
@@ -108,7 +108,7 @@ data/
 
 now run
 ```
-uv run  train_consistency.py 
+uv run train_consistency.py 
 ```
 
 
