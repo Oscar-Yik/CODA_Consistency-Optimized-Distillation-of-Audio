@@ -10,7 +10,7 @@ This repository is based on the [DiffPitcher](https://github.com/haidog-yaqub/Di
 https://drive.google.com/drive/folders/1g2FPZHMl1Upy9fooInuYx_wrQuInZWUP?usp=sharing
 
 # CODA Example
-Produces an autotuned version of `examples/emma_twinkle.wav` called `output_emma_twinkle.wav` using the CODA model.
+Produces an autotuned version of `examples/emma_twinkle.wav` called `output_emma_twinkle.wav` using the 4-step CODA model.
 ```
 uv pip install -r requirements.txt
 uv run coda.py
