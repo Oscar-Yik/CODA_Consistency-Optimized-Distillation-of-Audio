@@ -169,6 +169,8 @@ def generate_bar_graph(student_mses, teacher_100_mse):
         edgecolor='black',
         linewidth=1.5
     )
+
+    ax.set_yscale("log")
     
     # 4. Add the exact values perfectly centered on top of each bar
     for container in ax.containers:
@@ -179,7 +181,7 @@ def generate_bar_graph(student_mses, teacher_100_mse):
 
     # 6. Clean up formatting
     plt.title('Inference Efficiency: Consistency vs. Baseline', fontweight='bold', pad=20)
-    plt.ylabel('Mean Squared Error (MSE)', fontweight='bold')
+    plt.ylabel('Mean Squared Error (MSE) [Log Scale]', fontweight='bold')
     plt.xlabel('') # Remove redundant X-axis label
     
     # Fix the legend so it includes the dashed line and doesn't duplicate titles
@@ -190,8 +192,8 @@ def generate_bar_graph(student_mses, teacher_100_mse):
     sns.despine()
 
     plt.tight_layout()
-    plt.savefig(GRAPH_DIR / 'bar_chart_efficiency_seaborn.png', dpi=300)
-    print("Saved clean Seaborn bar chart to 'bar_chart_efficiency_seaborn.png'!")
+    plt.savefig(GRAPH_DIR / 'bar_chart_efficiency_seaborn.pdf')
+    print("Saved clean Seaborn bar chart to 'bar_chart_efficiency_seaborn.pdf'!")
 
 def generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show):
     print("Generating Side-by-Side Spectrograms...")
@@ -221,8 +223,8 @@ def generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show):
     fig.colorbar(im2, ax=axes[2])
 
     plt.tight_layout()
-    plt.savefig(GRAPH_DIR / 'spectrogram_comparison_4steps.png', dpi=300)
-    print("Saved comparison to 'spectrogram_comparison_4steps.png'!")
+    plt.savefig(GRAPH_DIR / 'spectrogram_comparison_4steps.pdf')
+    print("Saved comparison to 'spectrogram_comparison_4steps.pdf'!")
 
 def plot_side_by_side_mel_spectrogram(args, config, device):
 
@@ -235,13 +237,66 @@ def plot_side_by_side_mel_spectrogram(args, config, device):
 
     generate_spectrograms(gt_mel_show, student_mel_show, teacher_mel_show)
 
-def plot_efficiency_barchart(args, config, device):
+def plot_efficiency_barchart(args, config, device, num_samples=100):
 
-    student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg = load(args, config, device)
+    # student, teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg = load(args, config, device)
 
-    teacher_100_mse = teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
-    student_mses = student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
-    generate_bar_graph(student_mses, teacher_100_mse)
+    # teacher_100_mse = teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
+    # student_mses = student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
+    # generate_bar_graph(student_mses, teacher_100_mse)
+
+    student, teacher, generator, noise_scheduler, _, _, _, mel_cfg = load(args, config, device)
+
+    # 2. Re-initialize the DataLoader to stream our full test set
+    train_set = VCDecLPCDataset(args.data_dir, subset='test', content_dir=args.lpc_dir, f0_type="log")
+    collate_fn = VCDecLPCBatchCollate(args.train_frames)
+    loader = DataLoader(train_set, batch_size=1, shuffle=False, collate_fn=collate_fn)
+
+    # We know from your student_mse function that there are 4 milestones
+    milestones = [[0], [0, 50], [0, 25, 50, 75]] 
+    
+    # Trackers for the cumulative MSEs
+    teacher_mse_sum = 0.0
+    student_mse_sums = [0.0] * len(milestones)
+    
+    # Safety catch just in case your test folder has fewer than 100 samples
+    actual_samples = min(num_samples, len(loader))
+    
+    print(f"\n--- Starting Robust Evaluation over {actual_samples} Samples ---")
+    
+    # 3. The Evaluation Loop
+    for i, batch in enumerate(loader):
+        if i >= actual_samples:
+            break
+            
+        print(f"\nEvaluating Sample {i+1}/{actual_samples}...")
+        
+        # Unpack the current batch
+        gt_mel = batch['mel1'].to(device)
+        content = batch['content1'].to(device)
+        f0 = batch['f0_1'].to(device).long()
+        content_norm = minmax_norm_diff(content, vmax=mel_cfg['max'], vmin=mel_cfg['min'])
+        
+        # Calculate errors for this specific audio sample
+        t_mse = teacher_mse(teacher, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
+        s_mses = student_mse(student, generator, noise_scheduler, gt_mel, f0, content_norm, mel_cfg, device)
+        
+        # Add to our running totals
+        teacher_mse_sum += t_mse
+        for j in range(len(milestones)):
+            student_mse_sums[j] += s_mses[j]
+            
+    # 4. Calculate Final Averages
+    avg_teacher_mse = teacher_mse_sum / actual_samples
+    avg_student_mses = [s_sum / actual_samples for s_sum in student_mse_sums]
+
+    print(f"\n--- Final Averages ({actual_samples} Samples) ---")
+    print(f"Teacher Baseline (100 steps) MSE: {avg_teacher_mse:.4f}")
+    for j, chain in enumerate(milestones):
+        print(f"Student ({len(chain)} steps) MSE: {avg_student_mses[j]:.4f}")
+
+    # 5. Generate the Graph with the highly accurate averaged data!
+    generate_bar_graph(avg_student_mses, avg_teacher_mse)
 
 def generate_and_save_audio(args, config, device):
 
@@ -263,42 +318,9 @@ def generate_and_save_audio(args, config, device):
 
 def plot_f0_comparison():
 
-    # wav_path1 = GRAPH_DIR / "autotuned_emma_twinkle.wav"
-    # wav_path2 = GRAPH_DIR / "emma_twinkle.wav"
-    # output_path = GRAPH_DIR / "f0_comparison.png"
-    # label1 = "Autotuned"
-    # label2 = "Original"
-    # sr = 24000
-    # hop_length = 256
-
-    # f0_1 = get_f0(wav_path1, wav=None, method='world', padding=False)
-    # f0_2 = get_f0(wav_path2, wav=None, method='world', padding=False)
-    
-    # time1 = np.arange(len(f0_1)) * (hop_length / sr)
-    # time2 = np.arange(len(f0_2)) * (hop_length / sr)
-    
-    # plt.figure(figsize=(12, 6))
-    # plt.plot(time1, f0_1, label=label1, alpha=0.7, color='blue')
-    # plt.plot(time2, f0_2, label=label2, alpha=0.7, color='red', linestyle='--')
-    
-    # plt.title(f"F0 Pitch Comparison: {label1} vs {label2}")
-    # plt.xlabel("Time (seconds)")
-    # plt.ylabel("Frequency (Hz)")
-    
-    # combined_f0 = np.concatenate([f0_1, f0_2])
-    # voiced_points = combined_f0[combined_f0 > 0]
-    
-    # if len(voiced_points) > 0:
-    #     plt.ylim(voiced_points.min() - 10, voiced_points.max() + 10)
-    
-    # plt.legend()
-    # plt.grid(True, which='both', linestyle='--', alpha=0.5)
-    # plt.tight_layout()
-    # # plt.show()
-    # plt.savefig(output_path)
     wav_path1 = GRAPH_DIR / "autotuned_emma_twinkle.wav"
     wav_path2 = GRAPH_DIR / "emma_twinkle.wav"
-    output_path = GRAPH_DIR / "f0_comparison_seaborn.png"
+    output_path = GRAPH_DIR / "f0_comparison_seaborn.pdf"
     label1 = "Autotuned"
     label2 = "Original"
     sr = 24000
@@ -342,6 +364,17 @@ def plot_f0_comparison():
         linewidth=2.5,
         alpha=0.9
     )
+
+    # grid_color = sns.axes_style()["grid.color"]
+    palette = sns.color_palette("muted", 3)
+
+    # Notes
+    for (y, label), color in zip([(233.08, "B Flat"), (349.23, "F"), (392, "G")], palette):
+        ax.axhline(y=y, color=color, linestyle="--", linewidth=1.2, alpha=0.7, zorder=0)
+        ax.text(1.01, y, f"{label}", color=color, 
+                va='center', ha='left', 
+                transform=ax.get_yaxis_transform(), 
+                fontsize=11, fontweight='bold', alpha=0.9)
     
     plt.title(f"F0 Pitch Contour: {label1} vs {label2}", fontweight='bold', pad=15)
     
@@ -358,19 +391,32 @@ def plot_f0_comparison():
     sns.despine(left=True, bottom=True)
     
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
+    plt.savefig(output_path, dpi=100)
     print(f"Saved F0 comparison to '{output_path}'!")
 
-def plot_streaming_tradeoffs():
+def plot_streaming_tradeoffs(calculate_mse = False):
     print("Generating Stacked Trade-off Graphs...")
     
+    sizes = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
+    mses = [223.527, 166.592, 158.925, 153.565, 76.477, 68.271, 58.853, 56.268, 49.164]
+    if calculate_audio_mse:
+        original = GRAPH_DIR / "emma_twinkle.wav"
+        sizes = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
+        streamed = [GRAPH_DIR / f"streamed_output_{size}.wav" for size in sizes]
+        mses = []
+        for stream_audio in streamed:
+            mse = calculate_audio_mse(original, stream_audio)
+            mses.append(mse)
+
     # --- 1. YOUR BENCHMARK DATA ---
     # Replace these numbers with the actual results you get from running stream.py
     # at different chunk_size configurations in your config.json
+    window_chunks = [str(round(chunk/24)) for chunk in sizes]
+
     data = {
-        'Window Size': ['256', '512', '1024', '2048', '4096'],
-        'Inference Latency (ms)': [34.47, 40.08, 42.67, 85.33, 170.67],          # Get this from your terminal output
-        'MSE Error': [214.1978, 138.0096, 174.5990, 185.6136, 145.6736]  # Calculate MSE vs an offline target
+        'Window Size (ms)': window_chunks,
+        'Inference Latency (ms)': [37.322, 35.118, 35.082, 35.376, 36.744, 42.325, 41.43, 57.54, 56.441],          # Get this from your terminal output
+        'MSE Error': mses  # Calculate MSE vs an offline target
     }
     df = pd.DataFrame(data)
 
@@ -383,25 +429,25 @@ def plot_streaming_tradeoffs():
     nice_green = sns.color_palette("muted")[2]
 
     # --- 3. TOP GRAPH: LATENCY (PERFORMANCE) ---
-    sns.lineplot(data=df, x='Window Size', y='Inference Latency (ms)', ax=ax1, 
+    sns.lineplot(data=df, x='Window Size (ms)', y='Inference Latency (ms)', ax=ax1, 
                  color=nice_red, marker='o', markersize=10, linewidth=3)
     
     ax1.set_title("The Streaming Trade-off", fontweight='bold', pad=20, fontsize=18)
     ax1.set_ylabel("Processing Latency\n(Milliseconds)", fontweight='bold')
 
     # --- 4. BOTTOM GRAPH: QUALITY (ERROR) ---
-    sns.lineplot(data=df, x='Window Size', y='MSE Error', ax=ax2, 
+    sns.lineplot(data=df, x='Window Size (ms)', y='MSE Error', ax=ax2, 
                  color=nice_green, marker='s', markersize=10, linewidth=3)
     
     ax2.set_ylabel("Audio Distortion\n(Mean Squared Error)", fontweight='bold')
-    ax2.set_xlabel("Audio Buffer Chunk Size (Samples)", fontweight='bold')
+    ax2.set_xlabel("Audio Window Size (ms)", fontweight='bold')
 
     # --- 5. CLEANUP & SAVE ---
     sns.despine(left=True, bottom=True)
     plt.tight_layout()
     
-    plt.savefig(GRAPH_DIR / 'streaming_tradeoffs_stacked.png', dpi=300)
-    print("Saved dual graphs to 'streaming_tradeoffs_stacked.png'!")
+    plt.savefig(GRAPH_DIR / 'streaming_tradeoffs_stacked.pdf', dpi=300)
+    print("Saved dual graphs to 'streaming_tradeoffs_stacked.pdf'!")
 
 if __name__ == "__main__":
 
@@ -417,13 +463,8 @@ if __name__ == "__main__":
 
     # Actual graphing
     # plot_efficiency_barchart(args, config, device)
+    generate_bar_graph([20.0005, 0.8958, 0.2718], 0.2840)
     # plot_side_by_side_mel_spectrogram(args, config, device)
     # generate_and_save_audio(args, config, device)
     # plot_f0_comparison()
-    plot_streaming_tradeoffs()
-
-    # original = GRAPH_DIR / "emma_twinkle.wav"
-    # sizes = [256, 512, 1024, 2048, 4096]
-    # streamed = [GRAPH_DIR / f"streamed_output_window_{size}.wav" for size in sizes]
-    # for stream_audio in streamed:
-    #     calculate_audio_mse(original, stream_audio)
+    # plot_streaming_tradeoffs(calculate_mse=False)

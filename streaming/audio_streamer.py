@@ -190,7 +190,7 @@ class AudioStreamer:
 
             if streamed_chunks:
                 output_audio = np.concatenate(streamed_chunks)
-                output_path = f"streaming/streamed_output_{int(time.time())}.wav"
+                output_path = f"streaming/streamed_output_{self.window_size}.wav"
                 sf.write(output_path, output_audio, self.raw_sample_rate)
                 print(f"* Wrote streamed audio to {output_path}")
 

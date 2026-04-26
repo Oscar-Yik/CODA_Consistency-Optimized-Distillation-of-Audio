@@ -53,8 +53,8 @@ def create_audio_processor(model, hifigan, noise_scheduler, device, config, chai
 
         # Preprocessing
         preprocess_start = time.perf_counter()
-        # source_mel = get_world_mel(wav_path=None, sr=sr, wav=audio_window) # TODO: which get_*_mel to use?
-        source_mel = get_mel(wav_path=None, wav=audio_window)
+        source_mel = get_world_mel(wav_path=None, sr=sr, wav=audio_window) # TODO: which get_*_mel to use?
+        # source_mel = get_mel(wav_path=None, wav=audio_window)
         key = pitch_config["key"] if pitch_config["key"] != "" else None
         perf_cfg = config.get('performance', {})
         f0_ref = get_matched_f0(x_wav=audio_window, y_wav=audio_window, method='pyin', key=key, f0_min_note=pitch_config["f0_min_note"], f0_max_note=pitch_config["f0_max_note"], fast_f0=perf_cfg["fast_f0"])
