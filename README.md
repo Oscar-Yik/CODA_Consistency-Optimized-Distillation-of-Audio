@@ -1,81 +1,71 @@
-# TODO
-- Consider switching to Raspberry Pi
-    - Use Emma's :D
-    - Pico 2: $8.95
-    - Zero V1.3: $14.45
-    - Zero 2 W: $21:75
-    - Model A+: $36.45
-- How heavy and what the LiteVocoder can do
-- Try out using the big model with my own audio to test feasibility in the best case
+# CODA: Consistency Optimized Distillation of Audio
+CODA is a research prototype exploring the application of Consistency Distillation to real-time singing voice pitch correction. While state-of-the-art diffusion models like DiffPitcher provide unparalleled vocal quality, their iterative sampling process is often too computationally expensive for live streaming.
 
-# Usage
-- clone repo
-- `uv init` 
-- `uv pip install -r requirements.txt`
-- `uv run template_based_apc.py`
+By leveraging Consistency Distillation, we have compressed the 100-step diffusion process into a 3-to-4-step consistency student, achieving a 25$\times$ speedup in sampling efficiency. CODA is a first step in bridging the gap between generative research and real-world deployment, providing high-fidelity pitch correction on consumer-grade hardware with a focus on preserving natural vocal textures and timbre.
 
 
-# What does DiffPitcher do
+### Model weights: 
+https://drive.google.com/drive/folders/1g2FPZHMl1Upy9fooInuYx_wrQuInZWUP?usp=sharing
 
-![](./imgs/template_diff_pitcher.png)
 
-### Inputs
-- Source Audio (singer's voice/timbre/off-key singing)
-    - model extracts "speaker identity/timbre" to make output sound the same as the original singer
-- Reference Audio (off key singing)
-    - template mode: 
-        - directly use off-tune audio pitch
-    - score mode:
-        - instead of audio, use the MIDI as the pitch
-        - use PitchFormer model to predict the reference f0 pitch (pitch contour)
+# Streaming
+Supports streaming from mic or file.
 
-### Outputs
-- Autotuned mel-spectrogram of the reference in the same timbre as the source singer 
-    - feed this into BigVGAN to get the actual output audio
+## Config
+All configuration is inside of `streaming/config.json`
 
-### Advantages over regular autotune
-- Source-Filter Disentanglement: 
-    - treats source singer's voice like an instrument
-    - adjusts the pitch (cords,notes) but keeps the filter (vocal timbre)
-- Generative reconstruction:
-    - Doesn't just shift frequencies, it regenerates the notes 
-    - preserves natural glottal pulses
-        - better at vibrato and digital shifting
+### Chunk and Window size
+```json
+"audio": {
+    "chunk_size": 4096,
+    "window_size": 2048,
+    "raw_sample_rate": 48000,
+    "target_sample_rate": 24000
+},
+```
+My computer's native sample rate is 48k; adjust yours if it differs. We downsample this input to a 24k target rate. Note that `chunk_siz`e is defined relative to the `raw_sample_rate`, while `window_size` is relative to the `target_sample_rate`. Under this configuration, the window_size is numerically half of the chunk_size, but they represent the exact same temporal duration. The chunk size is how much data we buffer before actually processing it, and the window size is how much data we process each time we get a new `chunk_size` of data. 
 
-### Models
-- UNetPitcher
-- BigVGAN
-- PitchFormer
 
-# Idea
-Instead of using the off-key singing as the source for the vocal filter, we pitch snap it to the closest note and use it as the reference.
-A separate 5-10s "calibration" audio will be pre-recorded as the vocal filter and pre-loaded onto the ESP32's disk.
+In actual autotune, what you would do is have a larger `window_size` temporal duration compared to `chunk_size`, so that the model output would be "smoother". People would also fade in a new window (by overlapping the begining of that window with the previous window) to further make the audio less glitchy. However, unfortunatly our thing is too slow so we can't do that (lmao) but if we manage to have some extra buffer space then we can consider making the `window_size` bigger. Anyways, what I'm trying to say is just always keep the `window_size` as half of `chunk_size`. Lowering these will 1. make the delay between when you sing something and when the computer outputs something shorter and 2. make the quality worse. Feel free to tweak these settings to see what works best.
 
-![](./imgs/project_idea.png)
+### Source
+```json
+"source": {
+    "type": "file",
+    "file_path": "examples/emma_twinkle.wav"
+},
+```
+`type` is either "mic" or "file". if you choose file, then a `file_path` pointing to a .wav file must be specified. If you choose "mic", `file_path` will be ignored.
 
-### On PC
-1. train a dumb 1D CNN student model on Diff Pitcher
-2. on the pc, record a 5-10s calibration audio to get person's timbre 
-3. produce vector embeddings
+### Performance
+```json
+"performance": {
+    "precision": "fp32",
+    "compile": false,
+    "compile_backend": "inductor",
+    "consistency_iterations": 3,
+    "chain_indices": [0, 30, 60],
+    "fast_f0": true
+}
+```
+- `precision`: one of `["fp32", "fp16", "bf16"]`
+- `compile`: `true` or `false`. Determinines if we run `torch.compile` on the model and vocoder
+- `compile_backend`: the backend used for compilation. I'm pretty sure "inductor" is correct for like your GPU, but if something breaks then it might be because of this 
+- `consistency_iterations`: the number of iterations we run the consistency model
+- `chain_indices`: same as the chain indices in test_consistency.py. The length must match `consistency_iterations`. Leave this blank for the script to use evenly-spaced indices.
+- `fast_f0`: This decides if we use `pyin` or `yin` to get the f0. `pyin` uses HMM (probabilistic) so it is slow, but performs better. If you want to use it, it would be good to configure the min and max f0s as explained in the next section. `yin` is a lot faster as it is deterministic, but the quality is slightly worse. Overall, our audio quality is already bad due to the choppiness of the audio from processing tiny chunks at a time. So I don't think using the better one makes thaaaat big of a difference, so here the default is to use `yin` instead.
 
-### On ESP32
-1. Store calibration embeddings on disk
-2. record input off-tune audio
-3. run 1D CNN to get output mel-spectrogram
-4. run small vocoder to get the output audio 
-5. play the auto-tuned audio
+### Pitch
+```json
+"pitch": {
+    "f0_bin": 345,
+    "f0_min_note": "C2",
+    "f0_max_note": "C#6",
+    "key": "bb major"
+},
+```
+The key can be configured to pitch snap only to notes within the key. Leave it as an empty string to pitch snap to the closest note instead. The string follows the pattern of `"<note><#/b/nothing> <major/minor>"`. min and max f0 range can be narrowed to make the preprocessing faster. But since it is already lighting fast, it doesn't matter that much. Leaving it as it is will be fine for performance.
 
-### Details
-- Use int8 
-- tensorflow Lite micro?
-- Use template_pitcher
-    - don't use MIDI in order to remove the PitchFormer model
-    - score_pitcher needs timestamps to be aligned with MIDI 
-- Data transformations
-    - source audio 
-        - get its mel spectrogram (same process as described in wikipedia)
-    - reference audio 
-        - mix with input and perform signal processing functions to get f0 pitch 
 
 # Training
 
@@ -89,10 +79,10 @@ Download the OpenSigner dataset from this ![google drive link](https://drive.goo
 ```
 tar -xvzf OpenSinger.tar.gz --exclude="*.txt" --exclude="*.lab"
 ```
-The unzipped files should be around 50 GB (according to Gemini at least, I didn't try). Then run
+The unzipped files should be around 15 GB. Then run
 ```
 cd pitch_controller
-uv run prepare_test_data.py
+uv run prepare_train_data.py
 ```
 
 Then folder structure should look like this
@@ -119,56 +109,3 @@ now run
 ```
 uv run  train_consistency.py 
 ```
-
-Tunable parameters aree configured in `train_consistency.py` near the top. Feel free to change the batch size, mines is at 1 or else I get gpu OOM. Also, currently both students are on the GPU and the teacher is on CPU. If all models fit on GPU then feel free to move the Teacher over as well. Losses as well as inference outputs are written to `/pitch_controller/logs_consistency`. Consistency model weights are written to `ckpt_consistency`.
-
-## TODO:
-- make loss graph
-- make ability to continue training from a model weight snapshot
-- When project is done (i hope we get it done)
-    - clean up all the messy code for fun
-
-
-# Streaming
-Still currently a work in progress. Right now it just takes in mic input, performs pre-processing and throws the results away, and directly echos back the input. Running this using WSL makes the hardware latency very very high, so it will be better to run it from windows directly instead.
-
-<br>
-If you must run using WSL, then you may come across this error:
-
-```
-ALSA lib confmisc.c:855:(parse_card) cannot find card '0'
-ALSA lib conf.c:5204:(_snd_config_evaluate) function snd_func_card_inum returned error: No such file or directory
-ALSA lib confmisc.c:422:(snd_func_concat) error evaluating strings
-...
-OSError: [Errno -9996] Invalid output device (no default output device)
-```
-
-To fix, check that PulseServer exists with `ls /mnt/wslg/PulseServer`. If it doesnt exist, run `wsl --update` from powershell then restart wsl. Then put
-```
-export PULSE_SERVER=unix:/mnt/wslg/PulseServer
-export DISPLAY=:0
-```
-
-at the bottom of `~/.bashrc` and run `source ~/bashrc`. After that, run
-
-```
-sudo apt update
-sudo apt install pulseaudio-utils libasound2-plugins
-```
-
-Then run `pactl info`. This should show something like `Server String: unix:/mnt/wslg/PulseServer`. If it shows that, then it means it should work and you can try running `uv run stream.py` again.
-
-# Possible Student Models
-- 1D CNN
-- Others
-    - LSTM (complex)
-    - Phase Vocoding
-    - PSOLA
-    - DSP
-    - Consistency Models
-    - Flow Matching
-
-# Possible student vocoders
-- DDSP
-- LCPNet
-- LiteVocoder
