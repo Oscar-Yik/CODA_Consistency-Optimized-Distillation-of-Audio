@@ -35,7 +35,8 @@ def coda(source, model, hifigan, device, steps=4, shift_semi=0):
     milestones = np.linspace(0, 100, steps, endpoint=False, dtype=int).tolist()
 
 
-    current_input = torch.randn_like(content_norm, generator=generator).to(device)
+    # current_input = torch.randn_like(content_norm, generator=generator).to(device)
+    current_input = torch.randn(content_norm.shape, generator=generator, device=device)
     
     for step_num, current_t_idx in enumerate(milestones):
         t_current = torch.as_tensor([noise_scheduler.timesteps[current_t_idx]], device=device)
@@ -44,12 +45,13 @@ def coda(source, model, hifigan, device, steps=4, shift_semi=0):
         if step_num < len(milestones) - 1:
             next_t_idx = milestones[step_num + 1]
             t_next = torch.as_tensor([noise_scheduler.timesteps[next_t_idx]], device=device)
-            fresh_noise = torch.randn_like(pred_x0, generator=generator)
+            # fresh_noise = torch.randn_like(pred_x0, generator=generator)
+            fresh_noise = torch.randn(pred_x0.shape, generator=generator, device=device)
             current_input = noise_scheduler.add_noise(pred_x0, fresh_noise, t_next)
         else:
             final_pred = pred_x0
             
-    pred = reverse_minmax_norm_diff(final_pred, vmax=2.5, vmin=-12)
+    pred = reverse_minmax_norm_diff(final_pred, vmax=max_mel, vmin=min_mel)
 
     pred_audio = hifigan(pred)
     pred_audio = pred_audio.cpu().squeeze().clamp(-1, 1)
