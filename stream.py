@@ -170,7 +170,7 @@ if __name__ == '__main__':
     unet = UNetPitcher(**unet_cfg)
     model = ConsistencyPitcher(unet, sigma_data=0.5).to(device)
 
-    state_dict = torch.load(config['models']['consistency_checkpoint'], map_location=device, weights_only=True)
+    state_dict = torch.load(config['models']['consistency_checkpoint'], map_location=device, weights_only=False)
     for key in list(state_dict.keys()):
         state_dict[key.replace('_orig_mod.', '')] = state_dict.pop(key)
     model.load_state_dict(state_dict)

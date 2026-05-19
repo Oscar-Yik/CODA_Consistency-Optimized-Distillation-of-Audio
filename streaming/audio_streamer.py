@@ -47,6 +47,7 @@ class AudioStreamer:
             raise ValueError("file_path is required when source_type='file'")    
 
         self.buffer = FastBuffer(self.window_size)
+        self.streamed_chunks = []
         self.benchmarker = LatencyBenchmarker(chunk_size=self.chunk_size, sample_rate=self.raw_sample_rate)
 
         # file streaming state
@@ -91,6 +92,8 @@ class AudioStreamer:
         else:
             output_wav = raw_audio_data
 
+        self.streamed_chunks.append(output_wav)
+
         return (output_wav.astype(np.float32), pyaudio.paContinue)
 
     def _stream_from_mic(self):
@@ -117,6 +120,13 @@ class AudioStreamer:
             stream.stop_stream()
             stream.close()
             p.terminate()
+
+            if self.streamed_chunks:
+                output_audio = np.concatenate(self.streamed_chunks)
+                output_path = f"streaming/streamed_mic_output_{self.window_size}.wav"
+                sf.write(output_path, output_audio, self.raw_sample_rate)
+                print(f"* Wrote streamed audio to {output_path}")
+
             self.benchmarker.show_graph()
 
     def _stream_from_file(self):
@@ -134,7 +144,6 @@ class AudioStreamer:
             print(f"* Streaming from file (rate={self.raw_sample_rate}Hz, chunk={self.chunk_size})")
 
             chunk_duration = self.chunk_size / self.raw_sample_rate
-            streamed_chunks = []
 
             while self.file_position < len(self.file_audio_data):
                 chunk_start = time.perf_counter()
@@ -167,7 +176,7 @@ class AudioStreamer:
                 # Play output
                 output_wav = output_wav.astype(np.float32)
                 stream.write(output_wav.tobytes())
-                streamed_chunks.append(output_wav.copy())
+                self.streamed_chunks.append(output_wav.copy())
 
                 # Update position
                 self.file_position = chunk_end
@@ -188,9 +197,9 @@ class AudioStreamer:
             stream.close()
             p.terminate()
 
-            if streamed_chunks:
-                output_audio = np.concatenate(streamed_chunks)
-                output_path = f"streaming/streamed_output_{self.window_size}.wav"
+            if self.streamed_chunks:
+                output_audio = np.concatenate(self.streamed_chunks)
+                output_path = f"streaming/streamed_file_output_{self.window_size}.wav"
                 sf.write(output_path, output_audio, self.raw_sample_rate)
                 print(f"* Wrote streamed audio to {output_path}")
 
